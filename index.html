@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CentralDocs — Proposta Comercial</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #F0F4F8;
+      color: #1E2A3A;
+    }
+
+    /* ── HEADER ── */
+    header {
+      background: linear-gradient(135deg, #1E2A3A 0%, #2C3E55 100%);
+      color: #fff;
+      padding: 56px 40px 48px;
+      text-align: center;
+    }
+    header .logo {
+      font-size: 13px;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #7BAFD4;
+      margin-bottom: 16px;
+    }
+    header h1 {
+      font-size: 36px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    header p {
+      font-size: 16px;
+      color: #A8BFD0;
+      max-width: 520px;
+      margin: 0 auto;
+      line-height: 1.6;
+    }
+
+    /* ── CONTAINER ── */
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── SECTION TITLE ── */
+    .section-title {
+      text-align: center;
+      margin: 56px 0 32px;
+    }
+    .section-title h2 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1E2A3A;
+      margin-bottom: 8px;
+    }
+    .section-title p {
+      font-size: 15px;
+      color: #6B7A90;
+    }
+
+    /* ── PLANS GRID ── */
+    .plans {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-bottom: 56px;
+    }
+    @media (max-width: 720px) { .plans { grid-template-columns: 1fr; } }
+
+    .plan-card {
+      background: #fff;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.07);
+      display: flex;
+      flex-direction: column;
+    }
+    .plan-card.featured {
+      box-shadow: 0 8px 40px rgba(74,144,226,0.18);
+      border: 2px solid #4A90E2;
+    }
+
+    .plan-header {
+      padding: 32px 32px 24px;
+      background: #F8FAFF;
+      border-bottom: 1px solid #E8EDF4;
+    }
+    .plan-card.featured .plan-header {
+      background: linear-gradient(135deg, #4A90E2 0%, #357ABD 100%);
+      color: #fff;
+    }
+
+    .plan-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #4A90E2;
+      background: #E8F0FE;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .plan-card.featured .plan-badge {
+      background: rgba(255,255,255,0.2);
+      color: #fff;
+    }
+
+    .plan-header h3 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .plan-header .plan-desc {
+      font-size: 14px;
+      color: #6B7A90;
+      line-height: 1.5;
+    }
+    .plan-card.featured .plan-header .plan-desc { color: rgba(255,255,255,0.8); }
+
+    .plan-price {
+      margin-top: 20px;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+    .plan-price .amount {
+      font-size: 34px;
+      font-weight: 800;
+    }
+    .plan-price .period {
+      font-size: 13px;
+      color: #6B7A90;
+    }
+    .plan-card.featured .plan-price .period { color: rgba(255,255,255,0.7); }
+    .plan-price .plus-monthly {
+      font-size: 14px;
+      color: #6B7A90;
+      margin-top: 4px;
+    }
+    .plan-card.featured .plan-price .plus-monthly { color: rgba(255,255,255,0.8); }
+
+    .plan-body {
+      padding: 28px 32px 32px;
+      flex: 1;
+    }
+
+    .plan-body h4 {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #9AAEC1;
+      margin-bottom: 16px;
+    }
+
+    .plan-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .plan-features li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+      color: #3A4A5C;
+      line-height: 1.4;
+    }
+    .plan-features li .icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .icon-check { background: #E6F4EA; color: #27AE60; }
+    .icon-star  { background: #E8F0FE; color: #4A90E2; }
+
+    .how-it-works {
+      background: #F8FAFF;
+      border-radius: 10px;
+      padding: 16px 18px;
+      font-size: 13px;
+      color: #6B7A90;
+      line-height: 1.6;
+      border-left: 3px solid #D0D7E2;
+    }
+    .plan-card.featured .how-it-works {
+      background: #F0F5FF;
+      border-left-color: #4A90E2;
+    }
+    .how-it-works strong {
+      display: block;
+      font-size: 11px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #9AAEC1;
+      margin-bottom: 6px;
+    }
+
+    /* ── FLOW DIAGRAMS ── */
+    .flows {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-bottom: 56px;
+    }
+    @media (max-width: 720px) { .flows { grid-template-columns: 1fr; } }
+
+    .flow-card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    }
+    .flow-card h3 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1E2A3A;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .flow-card h3 span {
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .badge-essential { background: #E8EDF4; }
+    .badge-system    { background: #E8F0FE; }
+
+    /* flow steps */
+    .flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .flow-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      position: relative;
+    }
+    .flow-left {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .flow-dot {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+      z-index: 1;
+    }
+    .flow-line {
+      width: 2px;
+      flex: 1;
+      min-height: 24px;
+      margin: 4px 0;
+    }
+    .flow-content {
+      padding-bottom: 28px;
+      flex: 1;
+    }
+    .flow-content h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #1E2A3A;
+      margin-bottom: 4px;
+    }
+    .flow-content p {
+      font-size: 13px;
+      color: #6B7A90;
+      line-height: 1.5;
+    }
+
+    /* Essential flow — blue-grey */
+    .flow-essential .flow-dot { background: #E8EDF4; }
+    .flow-essential .flow-line { background: #D0D7E2; }
+
+    /* System flow — blue */
+    .flow-system .flow-dot { background: #E8F0FE; }
+    .flow-system .flow-line { background: #C5D8F8; }
+
+    /* ── COMPARISON TABLE ── */
+    .comparison {
+      background: #fff;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+      margin-bottom: 56px;
+    }
+    .comparison table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .comparison thead {
+      background: #F8FAFF;
+    }
+    .comparison th {
+      padding: 20px 24px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-align: left;
+      color: #6B7A90;
+      border-bottom: 1px solid #E8EDF4;
+    }
+    .comparison th:nth-child(2),
+    .comparison th:nth-child(3) { text-align: center; }
+    .comparison th:nth-child(3) { color: #4A90E2; }
+
+    .comparison td {
+      padding: 16px 24px;
+      font-size: 14px;
+      color: #3A4A5C;
+      border-bottom: 1px solid #F0F4F8;
+    }
+    .comparison tr:last-child td { border-bottom: none; }
+    .comparison tr:hover td { background: #FAFBFF; }
+
+    .comparison td:nth-child(2),
+    .comparison td:nth-child(3) { text-align: center; }
+
+    .check-yes { color: #27AE60; font-size: 18px; }
+    .check-no  { color: #D0D7E2; font-size: 18px; }
+
+    /* ── FOOTER ── */
+    footer {
+      background: #1E2A3A;
+      color: #6B8099;
+      text-align: center;
+      padding: 32px;
+      font-size: 13px;
+    }
+    footer strong { color: #A8BFD0; }
+
+    /* ── PRINT ── */
+    @media print {
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+      body { background: #fff; }
+
+      header {
+        background: #1E2A3A !important;
+        color: #fff !important;
+        padding: 32px 40px !important;
+      }
+
+      .plans, .flows {
+        grid-template-columns: 1fr 1fr !important;
+        gap: 16px !important;
+        page-break-inside: avoid;
+      }
+
+      .plan-card, .flow-card, .comparison {
+        box-shadow: none !important;
+        border: 1px solid #D0D7E2 !important;
+        page-break-inside: avoid;
+      }
+
+      .plan-card.featured {
+        border: 2px solid #4A90E2 !important;
+      }
+
+      .plan-header {
+        background: #F8FAFF !important;
+      }
+
+      .plan-card.featured .plan-header {
+        background: #1E2A3A !important;
+        color: #fff !important;
+      }
+
+      .plan-card.featured .plan-header .plan-desc,
+      .plan-card.featured .plan-price .period,
+      .plan-card.featured .plan-price .plus-monthly {
+        color: #ccc !important;
+      }
+
+      .plan-card.featured .plan-badge {
+        background: rgba(255,255,255,0.15) !important;
+        color: #fff !important;
+      }
+
+      .plan-body h4 { color: #9AAEC1 !important; }
+
+      .icon-check { background: #E6F4EA !important; color: #27AE60 !important; }
+      .icon-star  { background: #E8F0FE !important; color: #4A90E2 !important; }
+
+      .how-it-works { background: #F8FAFF !important; }
+      .plan-card.featured .how-it-works { background: #F0F5FF !important; }
+
+      .flow-essential .flow-dot { background: #E8EDF4 !important; }
+      .flow-system    .flow-dot { background: #E8F0FE !important; }
+
+      .comparison thead { background: #F8FAFF !important; }
+      .check-yes { color: #27AE60 !important; }
+      .check-no  { color: #D0D7E2 !important; }
+
+      footer {
+        background: #1E2A3A !important;
+        color: #6B8099 !important;
+      }
+
+      .section-title { margin: 32px 0 20px !important; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">CentralDocs</div>
+  <h1>Proposta Comercial</h1>
+  <p>Escolha o plano ideal para organizar, compartilhar e acessar os documentos da sua empresa.</p>
+</header>
+
+<div class="container">
+
+  <!-- SECTION: PLANOS -->
+  <div class="section-title">
+    <h2>Planos disponíveis</h2>
+    <p>Dois caminhos, cada um no ritmo certo para o seu negócio.</p>
+  </div>
+
+  <div class="plans">
+
+    <!-- PLANO ESSENCIAL -->
+    <div class="plan-card">
+      <div class="plan-header">
+        <div class="plan-badge">Plano Essencial</div>
+        <h3>📁 Organização e Compartilhamento</h3>
+        <p class="plan-desc">Ideal para quem precisa organizar e compartilhar arquivos entre computadores sem complicação.</p>
+        <div class="plan-price">
+          <span class="amount">R$ 1.500</span>
+          <span class="period">pagamento único</span>
+        </div>
+      </div>
+      <div class="plan-body">
+        <h4>O que está incluído</h4>
+        <ul class="plan-features">
+          <li><span class="icon icon-check">✓</span> Configuração do OneDrive da sua empresa</li>
+          <li><span class="icon icon-check">✓</span> Criação da estrutura de pastas do seu negócio</li>
+          <li><span class="icon icon-check">✓</span> Compartilhamento entre todos os computadores da equipe</li>
+          <li><span class="icon icon-check">✓</span> Acesso aos arquivos de qualquer lugar</li>
+          <li><span class="icon icon-check">✓</span> Treinamento básico de uso</li>
+        </ul>
+        <div class="how-it-works">
+          <strong>Como funciona</strong>
+          Os arquivos ficam salvos no OneDrive da Microsoft. Todos os computadores enxergam as mesmas pastas em tempo real, como se fosse uma pasta local. A organização fica por conta da sua equipe.
+        </div>
+      </div>
+    </div>
+
+    <!-- PLANO SISTEMA -->
+    <div class="plan-card featured">
+      <div class="plan-header">
+        <div class="plan-badge">Plano Sistema</div>
+        <h3>🖥️ Painel Exclusivo CentralDocs</h3>
+        <p class="plan-desc">Para quem quer controle total sobre documentos e processos através de um painel exclusivo.</p>
+        <div class="plan-price">
+          <span class="amount">R$ 1.500</span>
+          <span class="period">pagamento único</span>
+        </div>
+        <div class="plan-price" style="margin-top:8px;">
+          <span class="amount" style="font-size:22px;">+ R$ 250</span>
+          <span class="period">/mês</span>
+        </div>
+        <p class="plan-price plus-monthly">A mensalidade cobre infraestrutura, suporte e atualizações.</p>
+      </div>
+      <div class="plan-body">
+        <h4>O que está incluído</h4>
+        <ul class="plan-features">
+          <li><span class="icon icon-check">✓</span> Tudo do Plano Essencial</li>
+          <li><span class="icon icon-star">★</span> Painel CentralDocs exclusivo para sua empresa</li>
+          <li><span class="icon icon-star">★</span> Cadastro e organização de pastas por cliente/projeto</li>
+          <li><span class="icon icon-star">★</span> Armazenamento seguro na nuvem</li>
+          <li><span class="icon icon-star">★</span> Acesso simultâneo por múltiplos usuários</li>
+          <li><span class="icon icon-star">★</span> Busca rápida de qualquer documento</li>
+          <li><span class="icon icon-star">★</span> Backups automáticos</li>
+          <li><span class="icon icon-star">★</span> Suporte contínuo e atualizações do sistema</li>
+        </ul>
+        <div class="how-it-works">
+          <strong>Como funciona</strong>
+          Sua equipe acessa o CentralDocs pelo computador, cria pastas, sobe documentos e encontra tudo em segundos. Os arquivos ficam armazenados com segurança e acessíveis por qualquer máquina autorizada, online ou offline.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- SECTION: FLUXOS -->
+  <div class="section-title">
+    <h2>Como cada plano funciona na prática</h2>
+    <p>Veja o caminho que os seus arquivos percorrem em cada plano.</p>
+  </div>
+
+  <div class="flows">
+
+    <!-- FLUXO ESSENCIAL -->
+    <div class="flow-card">
+      <h3><span class="badge-essential">📁</span> Fluxo — Plano Essencial</h3>
+      <div class="flow flow-essential">
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">💼</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Configuração inicial</h4>
+            <p>OneDrive configurado em todos os computadores da equipe com a estrutura de pastas do seu negócio.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">💾</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Salvar um arquivo</h4>
+            <p>Sua equipe salva documentos normalmente na pasta do OneDrive, como faria em qualquer pasta do computador.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">☁️</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Sincronização automática</h4>
+            <p>O OneDrive envia o arquivo para a nuvem da Microsoft automaticamente.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">🖥️</div>
+          </div>
+          <div class="flow-content">
+            <h4>Acesso nos outros PCs</h4>
+            <p>Todos os computadores sincronizados já enxergam o arquivo, como se estivesse numa pasta local.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- FLUXO SISTEMA -->
+    <div class="flow-card">
+      <h3><span class="badge-system">🖥️</span> Fluxo — Plano Sistema</h3>
+      <div class="flow flow-system">
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">🔑</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Login no CentralDocs</h4>
+            <p>Cada usuário acessa o painel exclusivo da sua empresa com sua conta.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">📂</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Organizar por cliente ou projeto</h4>
+            <p>Crie pastas com o nome do cliente ou projeto e mantenha tudo separado e fácil de encontrar.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">📤</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Enviar documentos</h4>
+            <p>Suba arquivos Word, Excel e outros diretamente pelo painel. Funciona online e offline.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">🔍</div>
+            <div class="flow-line"></div>
+          </div>
+          <div class="flow-content">
+            <h4>Buscar qualquer documento</h4>
+            <p>Digite o nome do arquivo ou do cliente e encontre o que precisa em segundos, independente de onde foi salvo.</p>
+          </div>
+        </div>
+
+        <div class="flow-step">
+          <div class="flow-left">
+            <div class="flow-dot">👥</div>
+          </div>
+          <div class="flow-content">
+            <h4>Acesso simultâneo pela equipe</h4>
+            <p>Todos os computadores autorizados veem e acessam os mesmos arquivos em tempo real.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- SECTION: COMPARATIVO -->
+  <div class="section-title">
+    <h2>Comparativo dos planos</h2>
+    <p>Veja lado a lado o que cada plano oferece.</p>
+  </div>
+
+  <div class="comparison">
+    <table>
+      <thead>
+        <tr>
+          <th>Funcionalidade</th>
+          <th>Essencial</th>
+          <th>Sistema</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Compartilhamento entre computadores</td>
+          <td><span class="check-yes">✔</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Acesso remoto (fora da empresa)</td>
+          <td><span class="check-yes">✔</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Backup na nuvem</td>
+          <td><span class="check-yes">✔</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Painel de controle exclusivo</td>
+          <td><span class="check-no">✕</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Busca rápida de documentos</td>
+          <td><span class="check-no">✕</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Organização por cliente ou projeto</td>
+          <td><span class="check-no">✕</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Acesso offline</td>
+          <td><span class="check-no">✕</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Suporte e atualizações contínuas</td>
+          <td><span class="check-no">✕</span></td>
+          <td><span class="check-yes">✔</span></td>
+        </tr>
+        <tr>
+          <td>Mensalidade</td>
+          <td><span class="check-no">Não</span></td>
+          <td><span style="color:#4A90E2;font-size:13px;font-weight:600;">Sim</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <strong>CentralDocs</strong> — Proposta elaborada exclusivamente para sua empresa.<br/>
+  Dúvidas? Entre em contato para conversarmos sobre o melhor caminho para o seu negócio.
+</footer>
+
+</body>
+</html>

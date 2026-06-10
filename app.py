@@ -1,62 +1,123 @@
 import os
+import uuid
+import hashlib
+import threading
+import time
+import ctypes
+import ctypes.wintypes
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from supabase import create_client, Client
+import boto3
+from botocore.config import Config
+
+# ID único desta instância do app (muda a cada execução)
+SESSION_ID = str(uuid.uuid4())
+
+# Usuário logado (preenchido após login bem-sucedido)
+CURRENT_USER: dict = {}   # {"id": ..., "name": ..., "email": ...}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STORAGE — camada de abstração para cloud (Supabase / Cloudflare R2)
-#
-# Quando for conectar de verdade, implemente as funções marcadas com TODO
-# e aponte STORAGE_PROVIDER para o provedor escolhido.
-# O restante do app consome apenas as funções db_* e storage_* abaixo.
+# SUPABASE — banco de dados
 # ══════════════════════════════════════════════════════════════════════════════
 
-STORAGE_PROVIDER = "mock"   # trocar para "supabase" ou "cloudflare" quando pronto
-STORAGE_BUCKET   = "centraldocs"
+SUPABASE_URL = "https://ipstefusensfzjltdbwn.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlwc3RlZnVzZW5zZnpqbHRkYnduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMjU4MDEsImV4cCI6MjA5NjYwMTgwMX0.QSghFta1Qa6_rkPlHY0XvohAm0q6S0FRK6Aao1PZFeY"
+
+sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLOUDFLARE R2 — storage de arquivos
+# ══════════════════════════════════════════════════════════════════════════════
+
+CF_ACCOUNT_ID  = "0527279a58ca34c6f7759899a64d07e3"
+CF_ACCESS_KEY  = "7a3ac7882e63a79d2192d547e7b03f1d"
+CF_SECRET_KEY  = "17f05bbe4c37afe9dfbb368fce4cf74af7e219ea65c5183607b6f241015e6656"
+CF_BUCKET      = "centraldocs"
+CF_ENDPOINT    = f"https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+# Pasta local onde os arquivos ficam espelhados
+LOCAL_STORAGE  = os.path.join(os.path.expanduser("~"), "CentralDocs")
+os.makedirs(LOCAL_STORAGE, exist_ok=True)
+
+r2 = boto3.client(
+    "s3",
+    endpoint_url=CF_ENDPOINT,
+    aws_access_key_id=CF_ACCESS_KEY,
+    aws_secret_access_key=CF_SECRET_KEY,
+    config=Config(signature_version="s3v4"),
+)
+
+STORAGE_PROVIDER = "cloudflare"
+STORAGE_BUCKET   = CF_BUCKET
+
+
+def _local_path(storage_path: str) -> str:
+    """Retorna o caminho local equivalente ao storage_path."""
+    return os.path.join(LOCAL_STORAGE, storage_path.lstrip("/").replace("/", os.sep))
 
 
 def storage_upload(storage_path: str, local_path: str) -> str:
     """
-    Faz upload de um arquivo local para o storage.
-    Retorna a URL pública ou o storage_path confirmado.
-
-    TODO (Cloudflare R2):
-        import boto3
-        s3 = boto3.client("s3", endpoint_url=CF_ENDPOINT,
-                          aws_access_key_id=CF_KEY, aws_secret_access_key=CF_SECRET)
-        s3.upload_file(local_path, STORAGE_BUCKET, storage_path)
-        return storage_path
-
-    TODO (Supabase):
-        from supabase import create_client
-        sb = create_client(SUPABASE_URL, SUPABASE_KEY)
-        with open(local_path, "rb") as f:
-            sb.storage.from_(STORAGE_BUCKET).upload(storage_path, f)
-        return sb.storage.from_(STORAGE_BUCKET).get_public_url(storage_path)
+    Copia o arquivo para a pasta local CentralDocs e faz upload para o R2.
+    Retorna o storage_path.
     """
-    return storage_path   # mock: devolve o próprio caminho
+    # 1. Copia para pasta local espelhada
+    dest = _local_path(storage_path)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    import shutil
+    shutil.copy2(local_path, dest)
+
+    # 2. Upload para Cloudflare R2
+    try:
+        r2.upload_file(local_path, CF_BUCKET, storage_path)
+    except Exception as e:
+        print(f"[R2] Erro no upload: {e}")
+
+    return storage_path
+
+
+def storage_download(storage_path: str) -> str:
+    """
+    Baixa do R2 apenas se o arquivo não existe localmente ou se o R2 tem
+    versão mais recente. Retorna o caminho local.
+    """
+    dest = _local_path(storage_path)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    try:
+        meta = r2.head_object(Bucket=CF_BUCKET, Key=storage_path)
+        r2_mtime = meta["LastModified"].timestamp()
+        # Só baixa se local não existe ou R2 é mais recente (com 5s de tolerância)
+        if not os.path.exists(dest) or r2_mtime > os.path.getmtime(dest) + 5:
+            r2.download_file(CF_BUCKET, storage_path, dest)
+    except Exception as e:
+        print(f"[R2] Erro no download: {e}")
+        if not os.path.exists(dest):
+            return ""
+    return dest
 
 
 def storage_delete(storage_path: str):
-    """
-    Remove um arquivo/pasta do storage.
-
-    TODO (Cloudflare R2):
-        s3.delete_object(Bucket=STORAGE_BUCKET, Key=storage_path)
-
-    TODO (Supabase):
-        sb.storage.from_(STORAGE_BUCKET).remove([storage_path])
-    """
-    pass   # mock: não faz nada
+    """Remove o arquivo local e do R2."""
+    # Remove local
+    local = _local_path(storage_path)
+    if os.path.exists(local):
+        try:
+            os.remove(local)
+        except Exception:
+            pass
+    # Remove do R2
+    try:
+        r2.delete_object(Bucket=CF_BUCKET, Key=storage_path)
+    except Exception as e:
+        print(f"[R2] Erro ao deletar: {e}")
 
 
 def storage_list(storage_path: str) -> list[dict]:
-    """
-    Lista objetos dentro de um caminho no storage.
-    Retorna lista de {"name": str, "storage_path": str, "is_folder": bool, "size": int}
-
-    TODO (Cloudflare R2):
-        resp = s3.list_objects_v2(Bucket=STORAGE_BUCKET, Prefix=storage_path, Delimiter="/")
+    """Lista objetos dentro de um caminho no R2."""
+    try:
+        resp = r2.list_objects_v2(Bucket=CF_BUCKET, Prefix=storage_path, Delimiter="/")
         folders = [{"name": p["Prefix"].rstrip("/").split("/")[-1],
                     "storage_path": p["Prefix"], "is_folder": True, "size": 0}
                    for p in resp.get("CommonPrefixes", [])]
@@ -64,94 +125,274 @@ def storage_list(storage_path: str) -> list[dict]:
                     "storage_path": o["Key"], "is_folder": False, "size": o["Size"]}
                    for o in resp.get("Contents", []) if not o["Key"].endswith("/")]
         return folders + files
-
-    TODO (Supabase):
-        items = sb.storage.from_(STORAGE_BUCKET).list(storage_path)
-        return [{"name": i["name"], "storage_path": f"{storage_path}/{i['name']}",
-                 "is_folder": i["metadata"] is None, "size": i.get("metadata", {}).get("size", 0)}
-                for i in items]
-    """
-    return []   # mock: pasta vazia no cloud
+    except Exception:
+        return []
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BANCO DE DADOS — registros de pastas/arquivos
-#
-# Estrutura do registro:
-#   id           : int   — identificador único
-#   name         : str   — nome legível
-#   storage_path : str   — caminho dentro do bucket  ex: "documentos/orcamentos/"
-#   provider     : str   — "cloudflare" | "supabase" | "mock"
-#   type         : str   — "folder" | "file"
+# BANCO DE DADOS — Supabase (tabelas: folders, files)
 # ══════════════════════════════════════════════════════════════════════════════
-
-MOCK_DB: list[dict] = []
-
-
-def _next_id() -> int:
-    return max((r["id"] for r in MOCK_DB), default=0) + 1
-
 
 def _make_storage_path(parent_path: str, name: str, is_folder: bool) -> str:
-    """Monta o storage_path no estilo bucket: 'pasta/subpasta/nome/'"""
-    base = parent_path.rstrip("/")
+    """Monta o storage_path: 'pasta/subpasta/nome/' ou 'pasta/nome.ext' (sem barra inicial)"""
     slug = name.lower().replace(" ", "-")
-    return f"{base}/{slug}/" if is_folder else f"{base}/{slug}"
+    base = parent_path.strip("/")
+    if base:
+        return f"{base}/{slug}/" if is_folder else f"{base}/{slug}"
+    else:
+        return f"{slug}/" if is_folder else f"{slug}"
 
 
 def db_create_folder(name: str, parent_path: str = "") -> dict:
     storage_path = _make_storage_path(parent_path, name, is_folder=True)
-    record = {
-        "id":           _next_id(),
-        "name":         name,
+    res = sb.table("folders").insert({
+        "name": name,
         "storage_path": storage_path,
-        "provider":     STORAGE_PROVIDER,
-        "type":         "folder",
-    }
-    MOCK_DB.append(record)
-    return record
+        "parent_path": parent_path,
+    }).execute()
+    row = res.data[0]
+    return {"id": row["id"], "name": row["name"],
+            "storage_path": row["storage_path"], "type": "folder"}
 
 
 def db_create_file(name: str, parent_path: str) -> dict:
     storage_path = _make_storage_path(parent_path, name, is_folder=False)
-    record = {
-        "id":           _next_id(),
-        "name":         name,
+    res = sb.table("files").insert({
+        "name": name,
         "storage_path": storage_path,
-        "provider":     STORAGE_PROVIDER,
-        "type":         "file",
-    }
-    MOCK_DB.append(record)
-    return record
+        "parent_path": parent_path,
+    }).execute()
+    row = res.data[0]
+    return {"id": row["id"], "name": row["name"],
+            "storage_path": row["storage_path"], "type": "file"}
 
 
 def db_list_folders() -> list[dict]:
-    return [r for r in MOCK_DB if r["type"] == "folder"]
+    res = sb.table("folders").select("*").execute()
+    return [{"id": r["id"], "name": r["name"],
+             "storage_path": r["storage_path"], "type": "folder"}
+            for r in res.data]
 
 
 def db_list_children(parent_path: str) -> list[dict]:
-    """Retorna registros cujo storage_path é filho direto de parent_path."""
-    prefix = parent_path.rstrip("/") + "/"
+    """Retorna pastas e arquivos filhos diretos de parent_path."""
     result = []
-    for r in MOCK_DB:
-        sp = r["storage_path"]
-        if not sp.startswith(prefix):
-            continue
-        rest = sp[len(prefix):].rstrip("/")
-        if rest and "/" not in rest:   # filho direto
-            result.append(r)
+    # Pastas filhas diretas
+    folders = sb.table("folders").select("*").eq("parent_path", parent_path).execute()
+    for r in folders.data:
+        result.append({"id": r["id"], "name": r["name"],
+                       "storage_path": r["storage_path"], "type": "folder"})
+    # Arquivos filhos diretos
+    files = sb.table("files").select("*").eq("parent_path", parent_path).execute()
+    for r in files.data:
+        result.append({"id": r["id"], "name": r["name"],
+                       "storage_path": r["storage_path"], "type": "file"})
     return result
 
 
-def db_delete(record_id: int):
-    global MOCK_DB
-    rec = next((r for r in MOCK_DB if r["id"] == record_id), None)
-    if rec:
-        # remove o registro e todos os filhos (subpastas/arquivos)
-        prefix = rec["storage_path"]
-        MOCK_DB = [r for r in MOCK_DB
-                   if r["id"] != record_id and not r["storage_path"].startswith(prefix)]
-        storage_delete(rec["storage_path"])
+def db_list_all() -> list[dict]:
+    """Retorna todos os registros (para busca global)."""
+    result = []
+    folders = sb.table("folders").select("*").execute()
+    for r in folders.data:
+        result.append({"id": r["id"], "name": r["name"],
+                       "storage_path": r["storage_path"], "type": "folder"})
+    files = sb.table("files").select("*").execute()
+    for r in files.data:
+        result.append({"id": r["id"], "name": r["name"],
+                       "storage_path": r["storage_path"], "type": "file"})
+    return result
+
+
+def db_delete(record_id, record_type: str):
+    """Remove uma pasta (e sub-itens) ou arquivo do banco."""
+    if record_type == "folder":
+        # busca o storage_path para deletar filhos em cascata
+        res = sb.table("folders").select("storage_path").eq("id", record_id).execute()
+        if res.data:
+            prefix = res.data[0]["storage_path"]
+            # remove arquivos dentro da pasta (e subpastas)
+            all_files = sb.table("files").select("id, storage_path").execute()
+            for f in all_files.data:
+                if f["storage_path"].startswith(prefix):
+                    sb.table("files").delete().eq("id", f["id"]).execute()
+                    storage_delete(f["storage_path"])
+            # remove subpastas
+            all_folders = sb.table("folders").select("id, storage_path").execute()
+            for f in all_folders.data:
+                if f["storage_path"].startswith(prefix) and f["id"] != record_id:
+                    sb.table("folders").delete().eq("id", f["id"]).execute()
+        sb.table("folders").delete().eq("id", record_id).execute()
+    else:
+        res = sb.table("files").select("storage_path").eq("id", record_id).execute()
+        if res.data:
+            storage_delete(res.data[0]["storage_path"])
+        sb.table("files").delete().eq("id", record_id).execute()
+
+
+# ── Modal: Confirmação ───────────────────────────────────────────────────────
+class InfoDialog(tk.Toplevel):
+    """Diálogo informativo moderno com overlay escuro."""
+    def __init__(self, parent, title: str, message: str, submessage: str = "",
+                 icon: str = "⚠", icon_color: str = "#E67E22"):
+        self._overlay = tk.Toplevel(parent)
+        self._overlay.overrideredirect(True)
+        self._overlay.configure(bg="#000000")
+        self._overlay.attributes("-alpha", 0.45)
+        self._overlay.geometry(
+            f"{parent.winfo_width()}x{parent.winfo_height()}"
+            f"+{parent.winfo_rootx()}+{parent.winfo_rooty()}"
+        )
+        self._overlay.lift()
+
+        super().__init__(parent)
+        self.resizable(False, False)
+        self.configure(bg="#F5F6FA")
+        self.overrideredirect(True)
+        self.grab_set()
+        self.lift()
+
+        self.update_idletasks()
+        pw = parent.winfo_rootx() + parent.winfo_width() // 2
+        ph = parent.winfo_rooty() + parent.winfo_height() // 2
+        self.geometry(f"400x230+{pw - 200}+{ph - 115}")
+
+        self.configure(highlightthickness=1, highlightbackground="#D0D7E2")
+
+        # Header
+        header = tk.Frame(self, bg="#1E2A3A", height=52)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text=f"  {title}", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=16, pady=14)
+        close = tk.Label(header, text="✕", bg="#1E2A3A", fg="#6B8099",
+                         font=("Segoe UI", 11), cursor="hand2", padx=14)
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda _: self.destroy())
+        close.bind("<Enter>", lambda _: close.config(fg="#FFFFFF"))
+        close.bind("<Leave>", lambda _: close.config(fg="#6B8099"))
+
+        # Corpo
+        body = tk.Frame(self, bg="#F5F6FA")
+        body.pack(fill="both", expand=True, padx=28, pady=16)
+
+        # Ícone + mensagem principal
+        top = tk.Frame(body, bg="#F5F6FA")
+        top.pack(anchor="w", fill="x")
+        tk.Label(top, text=icon, bg="#F5F6FA", fg=icon_color,
+                 font=("Segoe UI", 20)).pack(side="left", padx=(0, 12))
+        tk.Label(top, text=message, bg="#F5F6FA", fg="#1E2A3A",
+                 font=("Segoe UI", 11, "bold"), anchor="w",
+                 justify="left", wraplength=300).pack(side="left", anchor="w")
+
+        if submessage:
+            tk.Label(body, text=submessage, bg="#F5F6FA", fg="#6B7A90",
+                     font=("Segoe UI", 9), anchor="w", justify="left",
+                     wraplength=344).pack(anchor="w", pady=(10, 0))
+
+        # Botão OK
+        btn_row = tk.Frame(self, bg="#F5F6FA")
+        btn_row.pack(fill="x", padx=28, pady=(0, 18))
+        tk.Button(btn_row, text="OK", bg="#4A90E2", fg="#FFFFFF", relief="flat",
+                  font=("Segoe UI", 10, "bold"), cursor="hand2",
+                  activebackground="#357ABD", activeforeground="#FFFFFF",
+                  padx=24, pady=6, command=self.destroy).pack(side="right")
+
+        self.bind("<Return>", lambda _: self.destroy())
+        self.bind("<Escape>", lambda _: self.destroy())
+
+    def destroy(self):
+        try: self._overlay.destroy()
+        except: pass
+        super().destroy()
+
+
+class ConfirmDialog(tk.Toplevel):
+    """Diálogo de confirmação moderno, substitui messagebox.askyesno."""
+    def __init__(self, parent, title: str, message: str, submessage: str = "",
+                 confirm_text: str = "Confirmar", confirm_color: str = "#E53935"):
+        # Overlay escuro sobre a janela principal
+        self._overlay = tk.Toplevel(parent)
+        self._overlay.overrideredirect(True)
+        self._overlay.configure(bg="#000000")
+        self._overlay.attributes("-alpha", 0.45)
+        self._overlay.geometry(
+            f"{parent.winfo_width()}x{parent.winfo_height()}"
+            f"+{parent.winfo_rootx()}+{parent.winfo_rooty()}"
+        )
+        self._overlay.lift()
+
+        super().__init__(parent)
+        self.title("")
+        self.resizable(False, False)
+        self.configure(bg="#F5F6FA")
+        self.overrideredirect(True)
+        self.grab_set()
+        self.result = False
+        self.lift()
+
+        self.update_idletasks()
+        pw = parent.winfo_rootx() + parent.winfo_width() // 2
+        ph = parent.winfo_rooty() + parent.winfo_height() // 2
+        self.geometry(f"400x210+{pw - 200}+{ph - 105}")
+
+        self._build(title, message, submessage, confirm_text, confirm_color)
+        self.bind("<Return>", lambda _: self._confirm())
+        self.bind("<Escape>", lambda _: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _build(self, title, message, submessage, confirm_text, confirm_color):
+        # Sombra/borda
+        self.configure(highlightthickness=1, highlightbackground="#D0D7E2")
+
+        # Header
+        header = tk.Frame(self, bg="#1E2A3A", height=52)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text=f"  {title}", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=16, pady=14)
+        close = tk.Label(header, text="✕", bg="#1E2A3A", fg="#6B8099",
+                         font=("Segoe UI", 11), cursor="hand2", padx=14)
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda _: self.destroy())
+        close.bind("<Enter>", lambda _: close.config(fg="#FFFFFF"))
+        close.bind("<Leave>", lambda _: close.config(fg="#6B8099"))
+
+        # Corpo
+        body = tk.Frame(self, bg="#F5F6FA")
+        body.pack(fill="both", expand=True, padx=28, pady=20)
+
+        tk.Label(body, text=message, bg="#F5F6FA", fg="#1E2A3A",
+                 font=("Segoe UI", 11, "bold"), anchor="w", justify="left").pack(anchor="w")
+
+        if submessage:
+            tk.Label(body, text=submessage, bg="#F5F6FA", fg="#6B7A90",
+                     font=("Segoe UI", 9), anchor="w", justify="left").pack(anchor="w", pady=(4, 0))
+
+        # Botões
+        btn_row = tk.Frame(self, bg="#F5F6FA")
+        btn_row.pack(fill="x", padx=28, pady=(0, 20))
+
+        tk.Button(btn_row, text="Cancelar", bg="#E8EDF4", fg="#1E2A3A",
+                  relief="flat", font=("Segoe UI", 10), cursor="hand2",
+                  activebackground="#D0D7E2", padx=18, pady=7,
+                  command=self.destroy).pack(side="right", padx=(8, 0))
+
+        tk.Button(btn_row, text=confirm_text, bg=confirm_color, fg="#FFFFFF",
+                  relief="flat", font=("Segoe UI", 10, "bold"), cursor="hand2",
+                  activebackground="#B71C1C", activeforeground="#FFFFFF",
+                  padx=18, pady=7, command=self._confirm).pack(side="right")
+
+    def _confirm(self):
+        self.result = True
+        self.destroy()
+
+    def destroy(self):
+        try:
+            self._overlay.destroy()
+        except Exception:
+            pass
+        super().destroy()
 
 
 # ── Modal: Nova Pasta ─────────────────────────────────────────────────────────
@@ -232,128 +473,223 @@ class NewFolderDialog(tk.Toplevel):
         self.destroy()
 
 
-# ── Modal: Novo Arquivo ───────────────────────────────────────────────────────
-FILE_TYPES = [
-    ("📝", "Word",  ".docx", "#2B579A"),
-    ("📊", "Excel", ".xlsx", "#217346"),
-]
-EXT_MAP = {label: ext for _, label, ext, _ in FILE_TYPES}
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTENTICAÇÃO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
-class NewFileDialog(tk.Toplevel):
+def auth_login(email: str, password: str) -> dict | None:
+    """Valida credenciais. Retorna o usuário ou None se inválido."""
+    hashed = _hash_password(password)
+    res = sb.table("users").select("*").eq("email", email).eq("password", hashed).execute()
+    return res.data[0] if res.data else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TRAVA DE ARQUIVO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def file_lock(file_id: str) -> bool:
+    """
+    Tenta travar o arquivo para esta sessão.
+    Retorna True se conseguiu, False se já está travado por outra sessão.
+    """
+    res = sb.table("files").select("locked_by").eq("id", file_id).execute()
+    if not res.data:
+        return False
+    row = res.data[0]
+    if row["locked_by"] and row["locked_by"] != SESSION_ID:
+        return False   # travado por outra sessão/instância
+    # Trava com o SESSION_ID desta instância
+    sb.table("files").update({
+        "locked_by":   SESSION_ID,
+        "locked_name": CURRENT_USER.get("name", "Usuário"),
+        "locked_at":   "now()",
+    }).eq("id", file_id).execute()
+    return True
+
+
+def file_unlock(file_id: str):
+    """Libera a trava do arquivo desta sessão."""
+    sb.table("files").update({
+        "locked_by":   None,
+        "locked_name": None,
+        "locked_at":   None,
+    }).eq("id", file_id).eq("locked_by", SESSION_ID).execute()
+
+
+def file_unlock_all():
+    """Libera todas as travas desta sessão ao fechar o app."""
+    sb.table("files").update({
+        "locked_by":   None,
+        "locked_name": None,
+        "locked_at":   None,
+    }).eq("locked_by", SESSION_ID).execute()
+
+
+def file_get_lock_info(file_id: str) -> dict | None:
+    """Retorna info de trava do arquivo, ou None se livre ou se é desta sessão."""
+    res = sb.table("files").select("locked_by, locked_name, locked_at").eq("id", file_id).execute()
+    if res.data and res.data[0]["locked_by"]:
+        row = res.data[0]
+        # Não bloqueia se a trava é desta própria sessão
+        if row["locked_by"] == SESSION_ID:
+            return None
+        return row
+    return None
+
+
+# ── Modal: Adicionar Arquivo ──────────────────────────────────────────────────
+class AddFileDialog(tk.Toplevel):
+    """Dialog com 3 opções: Novo Word, Novo Excel, Subir arquivo existente."""
+
     def __init__(self, parent, parent_storage_path: str):
         super().__init__(parent)
-        self.title("Novo Arquivo")
         self.resizable(False, False)
         self.configure(bg="#F5F6FA")
+        self.overrideredirect(True)
         self.grab_set()
+        # result: {"mode": "new"|"upload", "name": str, "local_path": str|None}
         self.result = None
         self._parent_storage_path = parent_storage_path
-        self._selected_type = FILE_TYPES[0]   # (icon, label, ext, color)
+        self._mode = "new"          # "new" ou "upload"
+        self._ext  = ".docx"
+        self._color = "#2B579A"
 
         self.update_idletasks()
         pw = parent.winfo_rootx() + parent.winfo_width() // 2
         ph = parent.winfo_rooty() + parent.winfo_height() // 2
-        self.geometry(f"500x340+{pw - 250}+{ph - 170}")
+        self.geometry(f"480x370+{pw - 240}+{ph - 185}")
         self._build()
 
     def _build(self):
+        # Header
         header = tk.Frame(self, bg="#1E2A3A", height=52)
         header.pack(fill="x")
         header.pack_propagate(False)
-        tk.Label(header, text="  Novo Arquivo", bg="#1E2A3A", fg="#FFFFFF",
+        tk.Label(header, text="  Adicionar Arquivo", bg="#1E2A3A", fg="#FFFFFF",
                  font=("Segoe UI", 13, "bold")).pack(side="left", padx=16, pady=12)
+        close = tk.Label(header, text="✕", bg="#1E2A3A", fg="#6B8099",
+                         font=("Segoe UI", 11), cursor="hand2", padx=14)
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda _: self.destroy())
+        close.bind("<Enter>",    lambda _: close.config(fg="#FFFFFF"))
+        close.bind("<Leave>",    lambda _: close.config(fg="#6B8099"))
 
         body = tk.Frame(self, bg="#F5F6FA")
         body.pack(fill="both", expand=True, padx=24, pady=16)
 
-        # Nome
-        tk.Label(body, text="Nome do arquivo", bg="#F5F6FA", fg="#6B7A90",
-                 font=("Segoe UI", 9)).pack(anchor="w")
-        self._name_var = tk.StringVar()
-        e = tk.Entry(body, textvariable=self._name_var, font=("Segoe UI", 11),
-                     relief="flat", bg="#FFFFFF", fg="#1E2A3A", insertbackground="#1E2A3A",
-                     highlightthickness=1, highlightbackground="#D0D7E2", highlightcolor="#4A90E2")
-        e.pack(fill="x", ipady=7, pady=(4, 14))
-        e.focus_set()
-        e.bind("<KeyRelease>", self._update_preview)
+        # ── Opções ──
+        tk.Label(body, text="O que deseja fazer?", bg="#F5F6FA", fg="#6B7A90",
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 8))
 
-        # Cards de tipo
-        tk.Label(body, text="Tipo de arquivo", bg="#F5F6FA", fg="#6B7A90",
-                 font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 6))
+        opts_row = tk.Frame(body, bg="#F5F6FA")
+        opts_row.pack(fill="x", pady=(0, 16))
 
-        types_row = tk.Frame(body, bg="#F5F6FA")
-        types_row.pack(fill="x", pady=(0, 14))
-
-        self._type_cards = {}
-        for ft in FILE_TYPES:
-            icon, label, ext, color = ft
-            card = tk.Frame(types_row, bg="#FFFFFF", cursor="hand2",
+        OPTIONS = [
+            ("📝", "Novo Word",   "new",    ".docx", "#2B579A"),
+            ("📊", "Novo Excel",  "new",    ".xlsx", "#217346"),
+            ("📁", "Subir arquivo", "upload", None,   "#E67E22"),
+        ]
+        self._opt_cards = {}
+        for icon, label, mode, ext, color in OPTIONS:
+            card = tk.Frame(opts_row, bg="#FFFFFF", cursor="hand2",
                             highlightthickness=2, highlightbackground="#E0E6EF",
-                            width=72, height=72)
+                            width=130, height=80)
             card.pack(side="left", padx=(0, 8))
             card.pack_propagate(False)
-
             tk.Label(card, text=icon, bg="#FFFFFF", fg=color,
-                     font=("Segoe UI", 20)).pack(pady=(8, 0))
+                     font=("Segoe UI", 22)).pack(pady=(8, 0))
             tk.Label(card, text=label, bg="#FFFFFF", fg="#1E2A3A",
                      font=("Segoe UI", 8)).pack()
-
-            self._type_cards[label] = (card, color)
+            self._opt_cards[label] = (card, color, mode, ext)
             for w in [card] + list(card.winfo_children()):
-                w.bind("<Button-1>", lambda _, f=ft: self._select_type(f))
+                w.bind("<Button-1>", lambda _, lb=label: self._select_opt(lb))
 
-        # Marca o primeiro como selecionado
-        self._select_type(FILE_TYPES[0], update_preview=False)
+        # ── Nome ──
+        self._name_lbl = tk.Label(body, text="Nome do arquivo", bg="#F5F6FA", fg="#6B7A90",
+                                  font=("Segoe UI", 9))
+        self._name_lbl.pack(anchor="w")
+        self._name_var = tk.StringVar()
+        self._entry = tk.Entry(body, textvariable=self._name_var, font=("Segoe UI", 11),
+                               relief="flat", bg="#FFFFFF", fg="#1E2A3A",
+                               insertbackground="#1E2A3A", highlightthickness=1,
+                               highlightbackground="#D0D7E2", highlightcolor="#4A90E2")
+        self._entry.pack(fill="x", ipady=7, pady=(4, 0))
+        self._entry.focus_set()
 
-
+        # Botões
         btn_row = tk.Frame(self, bg="#F5F6FA")
-        btn_row.pack(fill="x", padx=24, pady=(0, 20))
+        btn_row.pack(fill="x", padx=24, pady=(12, 20))
         tk.Button(btn_row, text="Cancelar", bg="#E8EDF4", fg="#1E2A3A", relief="flat",
                   font=("Segoe UI", 10), cursor="hand2", activebackground="#D0D7E2",
                   padx=16, pady=6, command=self.destroy).pack(side="right", padx=(8, 0))
-        tk.Button(btn_row, text="Criar Arquivo", bg="#27AE60", fg="#FFFFFF", relief="flat",
-                  font=("Segoe UI", 10, "bold"), cursor="hand2",
-                  activebackground="#1E8449", activeforeground="#FFFFFF",
-                  padx=16, pady=6, command=self._confirm).pack(side="right")
+        self._btn_ok = tk.Button(btn_row, text="Criar", bg="#27AE60", fg="#FFFFFF",
+                                 relief="flat", font=("Segoe UI", 10, "bold"), cursor="hand2",
+                                 activebackground="#1E8449", activeforeground="#FFFFFF",
+                                 padx=16, pady=6, command=self._confirm)
+        self._btn_ok.pack(side="right")
 
         self.bind("<Return>", lambda _: self._confirm())
         self.bind("<Escape>", lambda _: self.destroy())
 
-    def _select_type(self, ft, update_preview=True):
-        self._selected_type = ft
-        _, sel_label, _, sel_color = ft
-        for label, (card, color) in self._type_cards.items():
-            if label == sel_label:
+        # Seleciona Word por padrão
+        self._select_opt("Novo Word")
+
+    def _select_opt(self, label):
+        for lb, (card, color, mode, ext) in self._opt_cards.items():
+            if lb == label:
                 card.config(highlightbackground=color, bg="#F8FAFF")
-                for ch in card.winfo_children():
-                    ch.config(bg="#F8FAFF")
+                for ch in card.winfo_children(): ch.config(bg="#F8FAFF")
+                self._mode  = mode
+                self._ext   = ext
+                self._color = color
             else:
                 card.config(highlightbackground="#E0E6EF", bg="#FFFFFF")
-                for ch in card.winfo_children():
-                    ch.config(bg="#FFFFFF")
-        if update_preview:
-            self._update_preview()
+                for ch in card.winfo_children(): ch.config(bg="#FFFFFF")
 
-    def _storage_preview(self, name: str) -> str:
-        _, _, ext, _ = self._selected_type
-        slug = name.lower().replace(" ", "-") if name else "<nome>"
-        filename = f"{slug}{ext}"
-        base = self._parent_storage_path.rstrip("/")
-        return f"{STORAGE_BUCKET}  ›  {base}/{filename}"
-
-    def _update_preview(self, _=None):
-        self._preview_var.set(self._storage_preview(self._name_var.get().strip()))
+        if self._mode == "upload":
+            self._name_lbl.config(text="Arquivo selecionado")
+            self._entry.config(state="disabled", bg="#F0F0F0")
+            self._btn_ok.config(text="Selecionar arquivo")
+        else:
+            self._name_lbl.config(text="Nome do arquivo")
+            self._entry.config(state="normal", bg="#FFFFFF")
+            self._btn_ok.config(text="Criar")
 
     def _confirm(self):
-        name = self._name_var.get().strip()
-        if not name:
-            messagebox.showwarning("Atenção", "Informe um nome para o arquivo.", parent=self)
-            return
-        _, _, ext, _ = self._selected_type
-        filename = name if name.endswith(ext) else name + ext
-        self.result = {"name": filename}
-        self.destroy()
+        if self._mode == "upload":
+            local_path = filedialog.askopenfilename(
+                title="Selecionar arquivo",
+                filetypes=[
+                    ("Documentos", "*.docx *.xlsx *.pdf *.doc *.xls *.pptx *.txt"),
+                    ("Todos os arquivos", "*.*"),
+                ]
+            )
+            if not local_path:
+                return
+            self.result = {
+                "mode": "upload",
+                "name": os.path.basename(local_path),
+                "local_path": local_path,
+            }
+            self.destroy()
+        else:
+            name = self._name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Atenção", "Informe um nome para o arquivo.", parent=self)
+                return
+            filename = name if name.endswith(self._ext) else name + self._ext
+            self.result = {
+                "mode": "new",
+                "name": filename,
+                "local_path": None,
+                "ext": self._ext,
+            }
+            self.destroy()
 
 
 # ── Ícones por extensão ───────────────────────────────────────────────────────
@@ -383,21 +719,144 @@ class App(tk.Tk):
         super().__init__()
         self.title("CentralDocs")
         self.geometry("1240x720")
-        self.state("zoomed")
         self.minsize(900, 540)
-        self.configure(bg="#F5F6FA")
+        self.configure(bg="#1E2A3A")
+        self.overrideredirect(True)   # remove barra nativa do Windows
+        self._is_maximized = False
+        self._restore_geometry = "1240x720+120+60"
+        self._drag_start_x = 0
+        self._drag_start_y = 0
         self._root_path  = None
         self._current_path = None
-        self._history: list[str] = []   # pilha de navegação
+        self._history: list[str] = []
         self._search_after = None
+        self._open_files: set = set()
         self._build_ui()
+        # Inicia maximizado e força ícone na barra de tarefas
+        self.after(10, self._maximize)
+        self.after(50, self._fix_taskbar)
+        # Libera travas ao fechar
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        file_unlock_all()
+        self.destroy()
+
+    def _logout(self):
+        file_unlock_all()
+        self.destroy()
+        # Reabre a tela de login
+        login = LoginWindow()
+        login.mainloop()
+        if login._logged_in:
+            app = App()
+            app.mainloop()
+
+    def _fix_taskbar(self):
+        """Força o ícone do app a aparecer na barra de tarefas do Windows."""
+        GWL_EXSTYLE    = -20
+        WS_EX_APPWINDOW  = 0x00040000
+        WS_EX_TOOLWINDOW = 0x00000080
+        hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        # Esconde e mostra para o Windows registrar a mudança de estilo
+        self.withdraw()
+        self.after(10, self.deiconify)
+
+    def _get_work_area(self):
+        """Retorna (width, height, x, y) da área de trabalho, descontando a taskbar."""
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(rect), 0)
+        return rect.right - rect.left, rect.bottom - rect.top, rect.left, rect.top
+
+    def _maximize(self):
+        self._restore_geometry = self.geometry()
+        w, h, x, y = self._get_work_area()
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self._is_maximized = True
+        self._btn_max.config(text="❐")
+
+    def _toggle_maximize(self):
+        if self._is_maximized:
+            self.geometry(self._restore_geometry)
+            self._is_maximized = False
+            self._btn_max.config(text="□")
+        else:
+            self._restore_geometry = self.geometry()
+            w, h, x, y = self._get_work_area()
+            self.geometry(f"{w}x{h}+{x}+{y}")
+            self._is_maximized = True
+            self._btn_max.config(text="❐")
+
+    def _minimize(self):
+        SW_MINIMIZE = 6
+        hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+        ctypes.windll.user32.ShowWindow(hwnd, SW_MINIMIZE)
+
+    def _start_drag(self, event):
+        if self._is_maximized:
+            return
+        self._drag_start_x = event.x_root - self.winfo_x()
+        self._drag_start_y = event.y_root - self.winfo_y()
+
+    def _do_drag(self, event):
+        if self._is_maximized:
+            return
+        x = event.x_root - self._drag_start_x
+        y = event.y_root - self._drag_start_y
+        self.geometry(f"+{x}+{y}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # UI principal
     # ══════════════════════════════════════════════════════════════════════════
     def _build_ui(self):
+        # ── Barra de título customizada ───────────────────────────────────────
+        titlebar = tk.Frame(self, bg="#141F2D", height=36)
+        titlebar.pack(fill="x", side="top")
+        titlebar.pack_propagate(False)
+
+        # Ícone + nome do app
+        tk.Label(titlebar, text="  ◈  CentralDocs", bg="#141F2D", fg="#FFFFFF",
+                 font=("Segoe UI", 10, "bold")).pack(side="left", padx=8)
+
+        # Botões de controle (direita)
+        btn_cfg = dict(bg="#141F2D", font=("Segoe UI", 11), relief="flat",
+                       cursor="hand2", bd=0, padx=14, pady=4)
+
+        btn_close = tk.Button(titlebar, text="✕", fg="#9AAEC1",
+                              activebackground="#E53935", activeforeground="#FFFFFF",
+                              command=self._on_close, **btn_cfg)
+        btn_close.pack(side="right")
+        btn_close.bind("<Enter>", lambda _: btn_close.config(bg="#E53935", fg="#FFFFFF"))
+        btn_close.bind("<Leave>", lambda _: btn_close.config(bg="#141F2D", fg="#9AAEC1"))
+
+        self._btn_max = tk.Button(titlebar, text="□", fg="#9AAEC1",
+                                  activebackground="#2E3F52", activeforeground="#FFFFFF",
+                                  command=self._toggle_maximize, **btn_cfg)
+        self._btn_max.pack(side="right")
+        self._btn_max.bind("<Enter>", lambda _: self._btn_max.config(bg="#2E3F52", fg="#FFFFFF"))
+        self._btn_max.bind("<Leave>", lambda _: self._btn_max.config(bg="#141F2D", fg="#9AAEC1"))
+
+        btn_min = tk.Button(titlebar, text="─", fg="#9AAEC1",
+                            activebackground="#2E3F52", activeforeground="#FFFFFF",
+                            command=self._minimize, **btn_cfg)
+        btn_min.pack(side="right")
+        btn_min.bind("<Enter>", lambda _: btn_min.config(bg="#2E3F52", fg="#FFFFFF"))
+        btn_min.bind("<Leave>", lambda _: btn_min.config(bg="#141F2D", fg="#9AAEC1"))
+
+        # Arrastar janela pelo titlebar
+        titlebar.bind("<Button-1>",   self._start_drag)
+        titlebar.bind("<B1-Motion>",  self._do_drag)
+        titlebar.bind("<Double-1>",   lambda _: self._toggle_maximize())
+
+        # ── Corpo (sidebar + main) ─────────────────────────────────────────────
+        body = tk.Frame(self, bg="#F5F6FA")
+        body.pack(fill="both", expand=True)
+
         # ── Sidebar ───────────────────────────────────────────────────────────
-        self._sidebar = tk.Frame(self, bg="#1E2A3A", width=240)
+        self._sidebar = tk.Frame(body, bg="#1E2A3A", width=240)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
 
@@ -435,7 +894,7 @@ class App(tk.Tk):
         self._folders_list.pack(fill="x")
 
         # ── Main ──────────────────────────────────────────────────────────────
-        main = tk.Frame(self, bg="#F5F6FA")
+        main = tk.Frame(body, bg="#F5F6FA")
         main.pack(side="left", fill="both", expand=True)
 
         # Topbar
@@ -445,8 +904,24 @@ class App(tk.Tk):
         self._topbar_title = tk.Label(topbar, text="Documentos", bg="#FFFFFF", fg="#1E2A3A",
                                       font=("Segoe UI", 14, "bold"))
         self._topbar_title.pack(side="left", padx=24, pady=14)
-        tk.Label(topbar, text="Usuário  ▾", bg="#FFFFFF", fg="#1E2A3A",
-                 font=("Segoe UI", 10), cursor="hand2").pack(side="right", padx=24)
+        user_name = CURRENT_USER.get("name", "Usuário")
+        user_frame = tk.Frame(topbar, bg="#FFFFFF", cursor="hand2")
+        user_frame.pack(side="right", padx=24)
+        tk.Label(user_frame, text="👤", bg="#FFFFFF", fg="#4A90E2",
+                 font=("Segoe UI", 11)).pack(side="left")
+        user_lbl = tk.Label(user_frame, text=f"  {user_name}  ▾", bg="#FFFFFF", fg="#1E2A3A",
+                            font=("Segoe UI", 10))
+        user_lbl.pack(side="left")
+
+        def _show_user_menu(e):
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label=f"👤  {user_name}", state="disabled")
+            menu.add_separator()
+            menu.add_command(label="🚪  Sair", command=self._logout)
+            menu.tk_popup(e.x_root, e.y_root)
+
+        for w in [user_frame, user_lbl]:
+            w.bind("<Button-1>", _show_user_menu)
 
         # Container de páginas
         self._pages_container = tk.Frame(main, bg="#F5F6FA")
@@ -483,9 +958,6 @@ class App(tk.Tk):
         tk.Label(content, textvariable=self._result_var, bg="#F5F6FA",
                  fg="#6B7A90", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 4))
 
-        # Barra de ações — Nova Pasta / Novo Arquivo
-        self._action_bar = tk.Frame(content, bg="#F5F6FA")
-        self._action_bar.pack(fill="x", pady=(0, 10))
 
         # Área de cards com scroll
         wrapper = tk.Frame(content, bg="#F5F6FA")
@@ -498,37 +970,56 @@ class App(tk.Tk):
         canvas = tk.Canvas(wrapper, bg="#F5F6FA", highlightthickness=0)
         vsb = ttk.Scrollbar(wrapper, orient="vertical", command=canvas.yview,
                             style="Thin.Vertical.TScrollbar")
+
+        def _update_scrollbar(*_):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # Mostra a scrollbar só quando o conteúdo ultrapassa a área visível
+            if canvas.bbox("all") and canvas.bbox("all")[3] > canvas.winfo_height():
+                vsb.pack(side="right", fill="y")
+            else:
+                vsb.pack_forget()
+
         canvas.configure(yscrollcommand=vsb.set)
         canvas.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
 
         self._cards_frame = tk.Frame(canvas, bg="#F5F6FA")
         self._canvas_window = canvas.create_window((0, 0), window=self._cards_frame, anchor="nw")
 
-        self._cards_frame.bind("<Configure>",
-                               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self._cards_frame.bind("<Configure>", _update_scrollbar)
+        self._update_scrollbar = _update_scrollbar
         canvas.bind("<Configure>", self._on_canvas_resize)
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
+        def _on_mousewheel(e):
+            bbox = canvas.bbox("all")
+            if bbox and bbox[3] > canvas.winfo_height():
+                canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         self._canvas = canvas
         self._canvas_width = 0
+        self._resize_after = None
 
         # Tela inicial
         self._nav_go("documentos")
 
     def _on_canvas_resize(self, event):
         self._canvas.itemconfig(self._canvas_window, width=event.width)
-        # Re-renderiza o grid se a largura mudou o suficiente para alterar colunas
-        new_cols = self._calc_cols(event.width)
-        if new_cols != self._calc_cols(self._canvas_width):
-            self._canvas_width = event.width
+        new_width = event.width
+        if self._resize_after:
+            self.after_cancel(self._resize_after)
+        self._resize_after = self.after(120, lambda: self._apply_resize(new_width))
+
+    def _apply_resize(self, new_width: int):
+        self._resize_after = None
+        if self._calc_cols(new_width) != self._calc_cols(self._canvas_width):
+            self._canvas_width = new_width
             if self._current_path:
                 self._render_cards(self._current_path)
             else:
                 self._show_home()
         else:
-            self._canvas_width = event.width
+            self._canvas_width = new_width
+        self._update_scrollbar()
 
     def _calc_cols(self, width: int = 0) -> int:
         w = width or self._canvas_width or self._canvas.winfo_width()
@@ -568,40 +1059,35 @@ class App(tk.Tk):
         self._current_path = None
         self._root_path = None
         self._history.clear()
+        if self._search_after:
+            self.after_cancel(self._search_after)
+            self._search_after = None
         self._search_var.set("")
         self._result_var.set("")
-        self._clear_cards()
         self._clear_breadcrumb()
-        self._render_action_bar("home")
+        self._refresh_sidebar()
+        self._render_home_cards()
 
+    def _render_home_cards(self):
+        """Renderiza o grid da home: botão Nova Pasta + pastas cadastradas."""
+        self._clear_cards()
         folders = db_list_folders()
-
-        if not folders:
-            tk.Label(self._cards_frame, text="Nenhuma pasta cadastrada ainda.",
-                     bg="#F5F6FA", fg="#C0C8D4", font=("Segoe UI", 12)).pack(pady=60)
-            return
-
-        tk.Label(self._cards_frame, text=f"{len(folders)} pasta(s) cadastrada(s)",
-                 bg="#F5F6FA", fg="#6B7A90", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 12))
-
         COLS = self._calc_cols()
+
+        # Todas as entradas: [("add", None)] + pastas
+        entries = [("add", None)] + [("folder", f) for f in folders]
+
         row_frame = None
-        for i, folder in enumerate(folders):
+        for i, (kind, data) in enumerate(entries):
             if i % COLS == 0:
                 row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
                 row_frame.pack(fill="x", pady=4)
-            self._make_home_folder_card(row_frame, folder)
+            if kind == "add":
+                self._make_add_card(row_frame, "📁", "Nova Pasta", "#4A90E2",
+                                    self._open_new_folder_dialog)
+            else:
+                self._make_home_folder_card(row_frame, data)
 
-    def _render_action_bar(self, mode: str):
-        """mode: 'home' mostra só Nova Pasta; 'folder' mostra ambos."""
-        for w in self._action_bar.winfo_children():
-            w.destroy()
-
-        self._make_add_card(self._action_bar, "📁", "Nova Pasta", "#4A90E2",
-                            self._open_new_folder_dialog)
-        if mode == "folder":
-            self._make_add_card(self._action_bar, "📄", "Novo Arquivo", "#27AE60",
-                                self._open_new_file_dialog)
 
     def _clear_breadcrumb(self):
         for w in self._breadcrumb_frame.winfo_children():
@@ -649,18 +1135,9 @@ class App(tk.Tk):
         tk.Label(card, text="📁", bg="#FFFFFF", font=("Segoe UI", 30)).pack(pady=(14, 2))
         tk.Label(card, text=folder["name"], bg="#FFFFFF", fg="#1E2A3A",
                  font=("Segoe UI", 9, "bold"), wraplength=140, justify="center").pack()
-        tk.Label(card, text=f"id: {folder['id']}", bg="#FFFFFF", fg="#B0BEC5",
-                 font=("Segoe UI", 8)).pack()
-
-        # botão remover no canto superior direito
-        del_btn = tk.Label(card, text="✕", bg="#FFFFFF", fg="#D0D7E2",
-                           font=("Segoe UI", 9), cursor="hand2")
-        del_btn.place(relx=1.0, rely=0.0, anchor="ne", x=-4, y=4)
-        del_btn.bind("<Button-1>", lambda _, fid=folder["id"]: self._remove_folder(fid))
-        del_btn.bind("<Enter>", lambda _, w=del_btn: w.config(fg="#E53935"))
-        del_btn.bind("<Leave>", lambda _, w=del_btn: w.config(fg="#D0D7E2"))
 
         sp = folder["storage_path"]
+        fid = folder["id"]
 
         def on_enter(_):
             card.config(highlightbackground="#4A90E2", bg="#F0F5FF")
@@ -674,10 +1151,17 @@ class App(tk.Tk):
                 try: w.config(bg="#FFFFFF")
                 except Exception: pass
 
+        def on_right_click(event, _fid=fid):
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label="🗑  Excluir pasta",
+                             command=lambda: self._remove_folder(_fid))
+            menu.tk_popup(event.x_root, event.y_root)
+
         for w in [card] + list(card.winfo_children()):
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
             w.bind("<Button-1>", lambda _, p=sp: self._enter_folder(p))
+            w.bind("<Button-3>", on_right_click)
 
     def _enter_folder(self, storage_path: str):
         self._root_path = storage_path
@@ -685,10 +1169,34 @@ class App(tk.Tk):
         self._navigate_to(storage_path)
 
     def _remove_folder(self, folder_id: int):
-        if messagebox.askyesno("Remover", "Remover esta pasta do cadastro?\n(os arquivos no storage não serão apagados)"):
-            db_delete(folder_id)
+        dialog = ConfirmDialog(
+            self,
+            title="Excluir pasta",
+            message="Deseja excluir esta pasta?",
+            submessage="Esta ação removerá a pasta e todo o seu conteúdo.",
+            confirm_text="Excluir",
+            confirm_color="#E53935",
+        )
+        self.wait_window(dialog)
+        if dialog.result:
+            db_delete(folder_id, "folder")
             self._refresh_sidebar()
             self._show_home()
+
+    def _remove_file(self, file_id: int):
+        dialog = ConfirmDialog(
+            self,
+            title="Excluir arquivo",
+            message="Deseja excluir este arquivo?",
+            submessage="Esta ação não pode ser desfeita.",
+            confirm_text="Excluir",
+            confirm_color="#E53935",
+        )
+        self.wait_window(dialog)
+        if dialog.result:
+            db_delete(file_id, "file")
+            if self._current_path:
+                self._render_cards(self._current_path)
 
     def _refresh_sidebar(self):
         for w in self._folders_list.winfo_children():
@@ -706,7 +1214,6 @@ class App(tk.Tk):
             self._history.append(self._current_path)
         self._current_path = path
         self._search_var.set("")
-        self._render_action_bar("folder")
         self._render_cards(path)
         self._render_breadcrumb(path)
 
@@ -766,24 +1273,24 @@ class App(tk.Tk):
         self._clear_cards()
 
         entries = db_list_children(storage_path)
-
-        if not entries:
-            tk.Label(self._cards_frame, text="Pasta vazia", bg="#F5F6FA",
-                     fg="#C0C8D4", font=("Segoe UI", 12)).pack(pady=60)
-            return
-
         entries_sorted = sorted(entries, key=lambda e: (e["type"] != "folder", e["name"].lower()))
+
+        # Botão "Novo Arquivo" sempre primeiro no grid
+        all_items = [("add_file", None)] + [("rec", r) for r in entries_sorted]
 
         COLS = self._calc_cols()
         row_frame = None
-        for i, rec in enumerate(entries_sorted):
+        for i, (kind, data) in enumerate(all_items):
             if i % COLS == 0:
                 row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
                 row_frame.pack(fill="x", pady=4)
-            if rec["type"] == "folder":
-                self._make_folder_card(row_frame, rec)
+            if kind == "add_file":
+                self._make_add_card(row_frame, "📄", "Novo Arquivo", "#27AE60",
+                                    self._open_new_file_dialog)
+            elif data["type"] == "folder":
+                self._make_folder_card(row_frame, data)
             else:
-                self._make_file_card(row_frame, rec)
+                self._make_file_card(row_frame, data)
 
     def _make_folder_card(self, parent, rec: dict):
         ACCENT = "#4A90E2"
@@ -861,7 +1368,8 @@ class App(tk.Tk):
                  font=("Segoe UI", 10, "bold"), wraplength=136,
                  justify="left", anchor="w").pack(anchor="w", pady=(4, 0))
 
-        sp = rec["storage_path"]
+        sp  = rec["storage_path"]
+        fid = rec["id"]
 
         def on_enter(_):
             card.config(highlightbackground=color, bg="#FAFAFA")
@@ -883,15 +1391,20 @@ class App(tk.Tk):
                 try: w.config(bg="#FFFFFF")
                 except Exception: pass
 
-        def on_double(_sp=sp):
-            messagebox.showinfo("Arquivo no Storage",
-                                f"Caminho:\n{STORAGE_BUCKET}  ›  {_sp}\n\n"
-                                f"(Download via {STORAGE_PROVIDER} será implementado aqui)")
+        def on_right_click(event, _fid=fid):
+            menu = tk.Menu(self, tearoff=0)
+            menu.add_command(label="📂  Abrir arquivo",
+                             command=lambda: self._open_file(rec))
+            menu.add_separator()
+            menu.add_command(label="🗑  Excluir arquivo",
+                             command=lambda: self._remove_file(_fid))
+            menu.tk_popup(event.x_root, event.y_root)
 
         for w in [card, body, top_row] + list(top_row.winfo_children()) + list(body.winfo_children()):
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
-            w.bind("<Double-1>", lambda _e, p=sp: on_double(p))
+            w.bind("<Button-1>", lambda e, _rec=rec: self._open_file(_rec))
+            w.bind("<Button-3>", on_right_click)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Ações
@@ -938,23 +1451,137 @@ class App(tk.Tk):
 
     def _open_new_file_dialog(self):
         if not self._current_path:
-            messagebox.showwarning("Atenção", "Abra uma pasta primeiro para criar um arquivo.")
+            messagebox.showwarning("Atenção", "Abra uma pasta primeiro para adicionar um arquivo.")
             return
-        dialog = NewFileDialog(self, parent_storage_path=self._current_path)
+        dialog = AddFileDialog(self, parent_storage_path=self._current_path)
         self.wait_window(dialog)
-        if dialog.result:
-            filename = dialog.result["name"]
-            # Verifica duplicata na pasta atual
-            existentes = [r["name"].lower() for r in db_list_children(self._current_path)]
-            if filename.lower() in existentes:
-                messagebox.showwarning(
-                    "Nome duplicado",
-                    f'Já existe um arquivo chamado "{filename}" nesta pasta.\n'
-                    "Escolha um nome diferente.",
-                )
-                return
-            db_create_file(filename, parent_path=self._current_path)
-            self._render_cards(self._current_path)
+        if not dialog.result:
+            return
+
+        filename = dialog.result["name"]
+
+        # Verifica duplicata na pasta atual
+        existentes = [r["name"].lower() for r in db_list_children(self._current_path)]
+        if filename.lower() in existentes:
+            messagebox.showwarning(
+                "Nome duplicado",
+                f'Já existe um arquivo chamado "{filename}" nesta pasta.\n'
+                "Escolha um nome diferente.",
+            )
+            return
+
+        rec = db_create_file(filename, parent_path=self._current_path)
+
+        if dialog.result["mode"] == "upload":
+            storage_upload(rec["storage_path"], dialog.result["local_path"])
+        else:
+            # Cria arquivo em branco e faz upload
+            import tempfile
+            ext = dialog.result["ext"]
+            tmp = os.path.join(tempfile.gettempdir(), filename)
+            if ext == ".docx":
+                from docx import Document
+                Document().save(tmp)
+            elif ext == ".xlsx":
+                import openpyxl
+                openpyxl.Workbook().save(tmp)
+            storage_upload(rec["storage_path"], tmp)
+            # Abre automaticamente após criar
+            local = storage_download(rec["storage_path"])
+            if local:
+                os.startfile(local)
+
+        self._render_cards(self._current_path)
+
+    def _open_file(self, rec: dict):
+        """Abre o arquivo verificando trava. Baixa do R2 se necessário."""
+        # Verifica se está travado por outro usuário
+        lock = file_get_lock_info(rec["id"])
+        if lock and lock["locked_by"] != CURRENT_USER.get("id"):
+            # Formata a data
+            locked_at = lock.get("locked_at", "")
+            if locked_at:
+                try:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(locked_at.replace("Z", "+00:00"))
+                    locked_at = dt.astimezone().strftime("%d/%m/%Y às %H:%M")
+                except Exception:
+                    pass
+            dialog = InfoDialog(
+                self,
+                title="Arquivo em uso",
+                message=f"Editado por: {lock['locked_name']}",
+                submessage=f"Em uso desde {locked_at}.\nAguarde a pessoa fechar o arquivo para editá-lo.",
+                icon="🔒",
+                icon_color="#E67E22",
+            )
+            self.wait_window(dialog)
+            return
+
+        # Trava o arquivo para o usuário atual
+        if not file_lock(rec["id"]):
+            messagebox.showwarning("Arquivo em uso", "Não foi possível abrir o arquivo agora.")
+            return
+
+        # Baixa e abre
+        local = storage_download(rec["storage_path"])
+        if local and os.path.exists(local):
+            os.startfile(local)
+            self._open_files.add(rec["id"])
+            # Thread que monitora quando o arquivo for fechado, sincroniza com R2 e libera trava
+            threading.Thread(
+                target=self._watch_file_unlock,
+                args=(rec["id"], local, rec["storage_path"]),
+                daemon=True
+            ).start()
+        else:
+            file_unlock(rec["id"])
+            messagebox.showerror("Erro", "Não foi possível abrir o arquivo.")
+
+    def _watch_file_unlock(self, file_id: str, local_path: str, storage_path: str):
+        """
+        Roda em background. Monitora quando o arquivo é fechado pelo editor
+        (Word/LibreOffice), faz upload da versão atualizada para o R2 e libera a trava.
+        """
+        directory  = os.path.dirname(local_path)
+        filename   = os.path.basename(local_path)
+
+        # Arquivos de lock criados pelos editores enquanto o arquivo está aberto
+        lo_lock   = os.path.join(directory, f".~lock.{filename}#")   # LibreOffice
+        word_lock = os.path.join(directory, f"~${filename[2:]}")     # Microsoft Word
+
+        def _is_open():
+            # LibreOffice mantém .~lock.arquivo# enquanto aberto
+            if os.path.exists(lo_lock):
+                return True
+            # Word mantém ~$arquivo enquanto aberto
+            if os.path.exists(word_lock):
+                return True
+            # Fallback: tenta abrir exclusivamente
+            try:
+                with open(local_path, "r+b"):
+                    pass
+                return False
+            except (IOError, PermissionError):
+                return True
+
+        time.sleep(5)  # aguarda o editor abrir e criar o lock file
+
+        while True:
+            time.sleep(3)
+            if not _is_open():
+                # Aguarda 5s e confirma novamente — evita falso positivo durante Ctrl+S
+                time.sleep(5)
+                if not _is_open():
+                    # Arquivo realmente fechado — sobe para o R2
+                    try:
+                        r2.upload_file(local_path, CF_BUCKET, storage_path)
+                        print(f"[R2] Sincronizado: {storage_path}")
+                    except Exception as e:
+                        print(f"[R2] Erro ao sincronizar: {e}")
+                    file_unlock(file_id)
+                    self._open_files.discard(file_id)
+                    break
 
     def _choose_folder(self):
         pass  # não aplicável no modelo cloud
@@ -967,24 +1594,18 @@ class App(tk.Tk):
 
     def _run_search(self):
         query = self._search_var.get().strip().lower()
-        if not self._root_path:
-            return
         if not query:
             if self._current_path:
                 self._render_cards(self._current_path)
                 self._render_breadcrumb(self._current_path)
+            else:
+                self._render_home_cards()
             self._result_var.set("")
             return
 
         self._clear_cards()
-        matches = []
-        # Busca em todos os registros do banco
-        scope = self._root_path or ""
-        matches = [
-            r for r in MOCK_DB
-            if query in r["name"].lower()
-            and (not scope or r["storage_path"].startswith(scope))
-        ]
+        # Busca em TODOS os registros do banco, independente de onde o usuário está
+        matches = [r for r in db_list_all() if query in r["name"].lower()]
 
         COLS = self._calc_cols()
         row_frame = None
@@ -993,7 +1614,11 @@ class App(tk.Tk):
                 row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
                 row_frame.pack(fill="x", pady=4)
             if rec["type"] == "folder":
-                self._make_folder_card(row_frame, rec)
+                # Na home usa o card de home; dentro de pasta usa o card interno
+                if self._current_path:
+                    self._make_folder_card(row_frame, rec)
+                else:
+                    self._make_home_folder_card(row_frame, rec)
             else:
                 self._make_file_card(row_frame, rec)
 
@@ -1171,6 +1796,152 @@ class App(tk.Tk):
             self._show_clientes()
 
 
+# ── Tela de Login ─────────────────────────────────────────────────────────────
+class LoginWindow(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("CentralDocs")
+        self.configure(bg="#1E2A3A")
+        self.overrideredirect(True)
+        self.resizable(False, False)
+        self._logged_in = False
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+
+        W, H = 420, 520
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        self.geometry(f"{W}x{H}+{(sw - W)//2}+{(sh - H)//2}")
+        self._build()
+        self.after(50, self._fix_taskbar)
+
+    def _fix_taskbar(self):
+        GWL_EXSTYLE    = -20
+        WS_EX_APPWINDOW  = 0x00040000
+        WS_EX_TOOLWINDOW = 0x00000080
+        hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+        style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+        ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        self.withdraw()
+        self.after(10, self.deiconify)
+
+    def _build(self):
+        # Barra de título mínima
+        titlebar = tk.Frame(self, bg="#141F2D", height=32)
+        titlebar.pack(fill="x")
+        titlebar.pack_propagate(False)
+        btn_close = tk.Button(titlebar, text="✕", bg="#141F2D", fg="#6B8099",
+                              relief="flat", font=("Segoe UI", 10), cursor="hand2",
+                              bd=0, padx=12, pady=2, command=self.destroy,
+                              activebackground="#E53935", activeforeground="#FFFFFF")
+        btn_close.pack(side="right")
+        btn_close.bind("<Enter>", lambda _: btn_close.config(bg="#E53935", fg="#FFFFFF"))
+        btn_close.bind("<Leave>", lambda _: btn_close.config(bg="#141F2D", fg="#6B8099"))
+        titlebar.bind("<Button-1>",  self._start_drag)
+        titlebar.bind("<B1-Motion>", self._do_drag)
+
+        # Corpo
+        body = tk.Frame(self, bg="#1E2A3A")
+        body.pack(fill="both", expand=True, padx=48, pady=10)
+
+        # Logo / nome
+        tk.Label(body, text="◈", bg="#1E2A3A", fg="#4A90E2",
+                 font=("Segoe UI", 36)).pack(pady=(20, 0))
+        tk.Label(body, text="CentralDocs", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 22, "bold")).pack()
+        tk.Label(body, text="Gestão de Documentos", bg="#1E2A3A", fg="#6B8099",
+                 font=("Segoe UI", 10)).pack(pady=(2, 32))
+
+        # Campo Usuário
+        tk.Label(body, text="Usuário", bg="#1E2A3A", fg="#9AAEC1",
+                 font=("Segoe UI", 9), anchor="w").pack(fill="x")
+        user_frame = tk.Frame(body, bg="#2E3F52", highlightthickness=1,
+                              highlightbackground="#3A4F65")
+        user_frame.pack(fill="x", pady=(4, 14))
+        tk.Label(user_frame, text="  👤", bg="#2E3F52", fg="#6B8099",
+                 font=("Segoe UI", 11)).pack(side="left")
+        self._user_var = tk.StringVar()
+        user_entry = tk.Entry(user_frame, textvariable=self._user_var,
+                              bg="#2E3F52", fg="#FFFFFF", relief="flat",
+                              font=("Segoe UI", 11), insertbackground="#FFFFFF",
+                              highlightthickness=0)
+        user_entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(4, 8))
+        user_entry.bind("<FocusIn>",  lambda _: user_frame.config(highlightbackground="#4A90E2"))
+        user_entry.bind("<FocusOut>", lambda _: user_frame.config(highlightbackground="#3A4F65"))
+
+        # Campo Senha
+        tk.Label(body, text="Senha", bg="#1E2A3A", fg="#9AAEC1",
+                 font=("Segoe UI", 9), anchor="w").pack(fill="x")
+        pass_frame = tk.Frame(body, bg="#2E3F52", highlightthickness=1,
+                              highlightbackground="#3A4F65")
+        pass_frame.pack(fill="x", pady=(4, 28))
+        tk.Label(pass_frame, text="  🔒", bg="#2E3F52", fg="#6B8099",
+                 font=("Segoe UI", 11)).pack(side="left")
+        self._pass_var = tk.StringVar()
+        pass_entry = tk.Entry(pass_frame, textvariable=self._pass_var, show="•",
+                              bg="#2E3F52", fg="#FFFFFF", relief="flat",
+                              font=("Segoe UI", 11), insertbackground="#FFFFFF",
+                              highlightthickness=0)
+        pass_entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(4, 8))
+        pass_entry.bind("<FocusIn>",  lambda _: pass_frame.config(highlightbackground="#4A90E2"))
+        pass_entry.bind("<FocusOut>", lambda _: pass_frame.config(highlightbackground="#3A4F65"))
+        pass_entry.bind("<Return>", lambda _: self._login())
+
+        # Botão Entrar
+        btn = tk.Button(body, text="Entrar", bg="#4A90E2", fg="#FFFFFF",
+                        relief="flat", font=("Segoe UI", 12, "bold"),
+                        cursor="hand2", activebackground="#357ABD",
+                        activeforeground="#FFFFFF", pady=12,
+                        command=self._login)
+        btn.pack(fill="x")
+        btn.bind("<Enter>", lambda _: btn.config(bg="#357ABD"))
+        btn.bind("<Leave>", lambda _: btn.config(bg="#4A90E2"))
+
+        # Rodapé
+        tk.Label(body, text="© 2025 CentralDocs", bg="#1E2A3A", fg="#3A4F65",
+                 font=("Segoe UI", 8)).pack(side="bottom", pady=(0, 8))
+
+        user_entry.focus_set()
+
+    def _login(self):
+        email    = self._user_var.get().strip()
+        password = self._pass_var.get().strip()
+        if not email or not password:
+            self._show_error("Preencha e-mail e senha.")
+            return
+        user = auth_login(email, password)
+        if not user:
+            self._show_error("E-mail ou senha incorretos.")
+            return
+        # Armazena o usuário globalmente
+        global CURRENT_USER
+        CURRENT_USER = {"id": user["id"], "name": user["name"], "email": user["email"]}
+        self._logged_in = True
+        self.destroy()
+
+    def _show_error(self, msg: str):
+        if hasattr(self, "_error_lbl"):
+            self._error_lbl.config(text=msg)
+        else:
+            self._error_lbl = tk.Label(
+                self, text=msg, bg="#1E2A3A", fg="#E53935",
+                font=("Segoe UI", 9)
+            )
+            self._error_lbl.place(relx=0.5, rely=0.93, anchor="center")
+        self.after(3000, lambda: self._error_lbl.config(text=""))
+
+    def _start_drag(self, event):
+        self._drag_start_x = event.x_root - self.winfo_x()
+        self._drag_start_y = event.y_root - self.winfo_y()
+
+    def _do_drag(self, event):
+        self.geometry(f"+{event.x_root - self._drag_start_x}+{event.y_root - self._drag_start_y}")
+
+
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    login = LoginWindow()
+    login.mainloop()
+    if login._logged_in:
+        app = App()
+        app.mainloop()

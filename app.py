@@ -17,6 +17,47 @@ SESSION_ID = str(uuid.uuid4())
 # Usuário logado (preenchido após login bem-sucedido)
 CURRENT_USER: dict = {}   # {"id": ..., "name": ..., "email": ...}
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TENANT — configuração do cliente
+# ══════════════════════════════════════════════════════════════════════════════
+import json as _json
+
+import sys as _sys
+
+def _resource(filename: str) -> str:
+    """Retorna o caminho correto tanto rodando via .py quanto via .exe (PyInstaller)."""
+    if getattr(_sys, "frozen", False):
+        # Executando como .exe — arquivos embutidos ficam em _MEIPASS
+        base = _sys._MEIPASS
+        path = os.path.join(base, filename)
+        if os.path.exists(path):
+            return path
+    # Rodando via python ou arquivo ao lado do .exe
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+
+_BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+_CONFIG_FILE = _resource("config.json")
+_ICON_FILE   = _resource("icon.ico")
+
+def _load_config() -> dict:
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return {}
+
+_config = _load_config()
+TENANT_ID: str = _config.get("tenant_id", "")
+
+if not TENANT_ID:
+    import tkinter as _tk
+    _tk.Tk().withdraw()
+    import tkinter.messagebox as _mb
+    _mb.showerror("Configuração ausente",
+                  "Arquivo config.json não encontrado ou inválido.\n"
+                  "Contate o suporte.")
+    raise SystemExit(1)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SUPABASE — banco de dados
@@ -37,9 +78,10 @@ CF_SECRET_KEY  = "17f05bbe4c37afe9dfbb368fce4cf74af7e219ea65c5183607b6f241015e66
 CF_BUCKET      = "centraldocs"
 CF_ENDPOINT    = f"https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
-# Pasta local onde os arquivos ficam espelhados
-LOCAL_STORAGE  = os.path.join(os.path.expanduser("~"), "CentralDocs")
+# Pasta local onde os arquivos ficam espelhados (isolada por tenant)
+LOCAL_STORAGE  = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
 os.makedirs(LOCAL_STORAGE, exist_ok=True)
+LAST_USER_FILE = os.path.join(LOCAL_STORAGE, ".last_user")
 
 r2 = boto3.client(
     "s3",
@@ -60,7 +102,7 @@ def _local_path(storage_path: str) -> str:
 
 def storage_upload(storage_path: str, local_path: str) -> str:
     """
-    Copia o arquivo para a pasta local CentralDocs e faz upload para o R2.
+    Copia o arquivo para a pasta local Zynor Docs e faz upload para o R2.
     Retorna o storage_path.
     """
     # 1. Copia para pasta local espelhada
@@ -78,19 +120,24 @@ def storage_upload(storage_path: str, local_path: str) -> str:
     return storage_path
 
 
-def storage_download(storage_path: str) -> str:
+def storage_download(storage_path: str, force: bool = False) -> str:
     """
     Baixa do R2 apenas se o arquivo não existe localmente ou se o R2 tem
     versão mais recente. Retorna o caminho local.
+    force=True sempre baixa do R2, sobrescrevendo o arquivo local.
     """
     dest = _local_path(storage_path)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     try:
         meta = r2.head_object(Bucket=CF_BUCKET, Key=storage_path)
         r2_mtime = meta["LastModified"].timestamp()
-        # Só baixa se local não existe ou R2 é mais recente (com 5s de tolerância)
-        if not os.path.exists(dest) or r2_mtime > os.path.getmtime(dest) + 5:
-            r2.download_file(CF_BUCKET, storage_path, dest)
+        # Só baixa se local não existe, R2 é mais recente, ou force=True
+        if force or not os.path.exists(dest) or r2_mtime > os.path.getmtime(dest) + 5:
+            try:
+                r2.download_file(CF_BUCKET, storage_path, dest)
+            except PermissionError:
+                # Arquivo aberto por outro processo — usa a cópia local existente
+                pass
     except Exception as e:
         print(f"[R2] Erro no download: {e}")
         if not os.path.exists(dest):
@@ -134,13 +181,14 @@ def storage_list(storage_path: str) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _make_storage_path(parent_path: str, name: str, is_folder: bool) -> str:
-    """Monta o storage_path: 'pasta/subpasta/nome/' ou 'pasta/nome.ext' (sem barra inicial)"""
+    """Monta o storage_path prefixado com tenant_id para isolamento no R2."""
     slug = name.lower().replace(" ", "-")
     base = parent_path.strip("/")
     if base:
         return f"{base}/{slug}/" if is_folder else f"{base}/{slug}"
     else:
-        return f"{slug}/" if is_folder else f"{slug}"
+        # raiz do tenant
+        return f"{TENANT_ID}/{slug}/" if is_folder else f"{TENANT_ID}/{slug}"
 
 
 def db_create_folder(name: str, parent_path: str = "") -> dict:
@@ -149,6 +197,7 @@ def db_create_folder(name: str, parent_path: str = "") -> dict:
         "name": name,
         "storage_path": storage_path,
         "parent_path": parent_path,
+        "tenant_id": TENANT_ID,
     }).execute()
     row = res.data[0]
     return {"id": row["id"], "name": row["name"],
@@ -161,6 +210,7 @@ def db_create_file(name: str, parent_path: str) -> dict:
         "name": name,
         "storage_path": storage_path,
         "parent_path": parent_path,
+        "tenant_id": TENANT_ID,
     }).execute()
     row = res.data[0]
     return {"id": row["id"], "name": row["name"],
@@ -168,22 +218,22 @@ def db_create_file(name: str, parent_path: str) -> dict:
 
 
 def db_list_folders() -> list[dict]:
-    res = sb.table("folders").select("*").execute()
+    res = sb.table("folders").select("*").eq("tenant_id", TENANT_ID).execute()
     return [{"id": r["id"], "name": r["name"],
-             "storage_path": r["storage_path"], "type": "folder"}
+             "storage_path": r["storage_path"],
+             "parent_path": r.get("parent_path", ""),
+             "type": "folder"}
             for r in res.data]
 
 
 def db_list_children(parent_path: str) -> list[dict]:
     """Retorna pastas e arquivos filhos diretos de parent_path."""
     result = []
-    # Pastas filhas diretas
-    folders = sb.table("folders").select("*").eq("parent_path", parent_path).execute()
+    folders = sb.table("folders").select("*").eq("tenant_id", TENANT_ID).eq("parent_path", parent_path).execute()
     for r in folders.data:
         result.append({"id": r["id"], "name": r["name"],
                        "storage_path": r["storage_path"], "type": "folder"})
-    # Arquivos filhos diretos
-    files = sb.table("files").select("*").eq("parent_path", parent_path).execute()
+    files = sb.table("files").select("*").eq("tenant_id", TENANT_ID).eq("parent_path", parent_path).execute()
     for r in files.data:
         result.append({"id": r["id"], "name": r["name"],
                        "storage_path": r["storage_path"], "type": "file"})
@@ -191,13 +241,13 @@ def db_list_children(parent_path: str) -> list[dict]:
 
 
 def db_list_all() -> list[dict]:
-    """Retorna todos os registros (para busca global)."""
+    """Retorna todos os registros do tenant (para busca global)."""
     result = []
-    folders = sb.table("folders").select("*").execute()
+    folders = sb.table("folders").select("*").eq("tenant_id", TENANT_ID).execute()
     for r in folders.data:
         result.append({"id": r["id"], "name": r["name"],
                        "storage_path": r["storage_path"], "type": "folder"})
-    files = sb.table("files").select("*").execute()
+    files = sb.table("files").select("*").eq("tenant_id", TENANT_ID).execute()
     for r in files.data:
         result.append({"id": r["id"], "name": r["name"],
                        "storage_path": r["storage_path"], "type": "file"})
@@ -207,18 +257,15 @@ def db_list_all() -> list[dict]:
 def db_delete(record_id, record_type: str):
     """Remove uma pasta (e sub-itens) ou arquivo do banco."""
     if record_type == "folder":
-        # busca o storage_path para deletar filhos em cascata
         res = sb.table("folders").select("storage_path").eq("id", record_id).execute()
         if res.data:
             prefix = res.data[0]["storage_path"]
-            # remove arquivos dentro da pasta (e subpastas)
-            all_files = sb.table("files").select("id, storage_path").execute()
+            all_files = sb.table("files").select("id, storage_path").eq("tenant_id", TENANT_ID).execute()
             for f in all_files.data:
                 if f["storage_path"].startswith(prefix):
                     sb.table("files").delete().eq("id", f["id"]).execute()
                     storage_delete(f["storage_path"])
-            # remove subpastas
-            all_folders = sb.table("folders").select("id, storage_path").execute()
+            all_folders = sb.table("folders").select("id, storage_path").eq("tenant_id", TENANT_ID).execute()
             for f in all_folders.data:
                 if f["storage_path"].startswith(prefix) and f["id"] != record_id:
                     sb.table("folders").delete().eq("id", f["id"]).execute()
@@ -228,6 +275,81 @@ def db_delete(record_id, record_type: str):
         if res.data:
             storage_delete(res.data[0]["storage_path"])
         sb.table("files").delete().eq("id", record_id).execute()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GRUPOS E USUÁRIOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def group_list() -> list[dict]:
+    res = sb.table("groups").select("*").eq("tenant_id", TENANT_ID).order("name").execute()
+    return res.data
+
+def group_create(name: str, can_view: bool, can_create: bool,
+                 can_edit: bool, can_delete: bool, is_admin: bool) -> dict:
+    res = sb.table("groups").insert({
+        "name": name, "can_view": can_view, "can_create": can_create,
+        "can_edit": can_edit, "can_delete": can_delete, "is_admin": is_admin,
+        "tenant_id": TENANT_ID,
+    }).execute()
+    return res.data[0]
+
+def group_update(group_id: str, name: str, can_view: bool, can_create: bool,
+                 can_edit: bool, can_delete: bool, is_admin: bool):
+    sb.table("groups").update({
+        "name": name, "can_view": can_view, "can_create": can_create,
+        "can_edit": can_edit, "can_delete": can_delete, "is_admin": is_admin,
+    }).eq("id", group_id).eq("tenant_id", TENANT_ID).execute()
+
+def group_delete(group_id: str):
+    sb.table("groups").delete().eq("id", group_id).eq("tenant_id", TENANT_ID).execute()
+
+def user_list() -> list[dict]:
+    """Retorna usuários do tenant com nome do grupo."""
+    users = sb.table("users").select("id, name, email, created_at").eq("tenant_id", TENANT_ID).order("name").execute()
+    result = []
+    for u in users.data:
+        ug = sb.table("user_groups").select("group_id, groups(name)").eq("user_id", u["id"]).execute()
+        group_name = ug.data[0]["groups"]["name"] if ug.data else "Sem grupo"
+        group_id   = ug.data[0]["group_id"] if ug.data else None
+        result.append({**u, "group_name": group_name, "group_id": group_id})
+    return result
+
+def user_create(name: str, email: str, password: str, group_id: str) -> dict:
+    res = sb.table("users").insert({
+        "name": name, "email": email,
+        "password": _hash_password(password),
+        "tenant_id": TENANT_ID,
+    }).execute()
+    user = res.data[0]
+    sb.table("user_groups").insert({"user_id": user["id"], "group_id": group_id}).execute()
+    return user
+
+def user_update(user_id: str, name: str | None, email: str | None,
+                password: str | None, group_id: str | None):
+    data: dict = {}
+    if name:    data["name"]  = name
+    if email:   data["email"] = email
+    if password: data["password"] = _hash_password(password)
+    if data:
+        sb.table("users").update(data).eq("id", user_id).execute()
+    if group_id:
+        sb.table("user_groups").delete().eq("user_id", user_id).execute()
+        sb.table("user_groups").insert({"user_id": user_id, "group_id": group_id}).execute()
+
+def user_delete(user_id: str):
+    sb.table("users").delete().eq("id", user_id).execute()
+
+def get_current_user_permissions() -> dict:
+    """Retorna as permissões do usuário logado."""
+    if not CURRENT_USER.get("id"):
+        return {"can_view": True, "can_create": False,
+                "can_edit": False, "can_delete": False, "is_admin": False}
+    ug = sb.table("user_groups").select("group_id, groups(*)").eq("user_id", CURRENT_USER["id"]).execute()
+    if ug.data:
+        return ug.data[0]["groups"]
+    return {"can_view": True, "can_create": False,
+            "can_edit": False, "can_delete": False, "is_admin": False}
 
 
 # ── Modal: Confirmação ───────────────────────────────────────────────────────
@@ -482,10 +604,39 @@ def _hash_password(password: str) -> str:
 
 
 def auth_login(email: str, password: str) -> dict | None:
-    """Valida credenciais. Retorna o usuário ou None se inválido."""
+    """Valida credenciais do tenant. Retorna o usuário ou None se inválido."""
     hashed = _hash_password(password)
-    res = sb.table("users").select("*").eq("email", email).eq("password", hashed).execute()
+    res = sb.table("users").select("*").eq("tenant_id", TENANT_ID).eq("email", email).eq("password", hashed).execute()
     return res.data[0] if res.data else None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUDIT LOG
+# ══════════════════════════════════════════════════════════════════════════════
+
+def audit(action: str, target_type: str = None, target_name: str = None):
+    """Registra uma ação do usuário logado no audit_log."""
+    try:
+        sb.table("audit_log").insert({
+            "tenant_id":   TENANT_ID,
+            "user_id":     CURRENT_USER.get("id"),
+            "user_name":   CURRENT_USER.get("name", ""),
+            "action":      action,
+            "target_type": target_type,
+            "target_name": target_name,
+        }).execute()
+    except Exception as e:
+        print(f"[Audit] Erro: {e}")
+
+def audit_list(limit: int = 200) -> list[dict]:
+    """Retorna os últimos registros de audit do tenant."""
+    res = (sb.table("audit_log")
+             .select("*")
+             .eq("tenant_id", TENANT_ID)
+             .order("created_at", desc=True)
+             .limit(limit)
+             .execute())
+    return res.data
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -717,7 +868,9 @@ def file_icon(name: str):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("CentralDocs")
+        self.title("Zynor Docs")
+        if os.path.exists(_ICON_FILE):
+            self.iconbitmap(_ICON_FILE)
         self.geometry("1240x720")
         self.minsize(900, 540)
         self.configure(bg="#1E2A3A")
@@ -743,6 +896,7 @@ class App(tk.Tk):
         self.destroy()
 
     def _logout(self):
+        audit("logout")
         file_unlock_all()
         self.destroy()
         # Reabre a tela de login
@@ -754,16 +908,36 @@ class App(tk.Tk):
 
     def _fix_taskbar(self):
         """Força o ícone do app a aparecer na barra de tarefas do Windows."""
-        GWL_EXSTYLE    = -20
+        GWL_EXSTYLE      = -20
         WS_EX_APPWINDOW  = 0x00040000
         WS_EX_TOOLWINDOW = 0x00000080
         hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
         style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
-        # Esconde e mostra para o Windows registrar a mudança de estilo
+        self._apply_icon(hwnd)
         self.withdraw()
         self.after(10, self.deiconify)
+
+    def _apply_icon(self, hwnd=None):
+        """Força o ícone personalizado na barra de tarefas via WM_SETICON."""
+        if not os.path.exists(_ICON_FILE):
+            return
+        try:
+            LR_LOADFROMFILE = 0x00000010
+            IMAGE_ICON      = 1
+            WM_SETICON      = 0x0080
+            ICON_SMALL      = 0
+            ICON_BIG        = 1
+            hicon = ctypes.windll.user32.LoadImageW(
+                None, _ICON_FILE, IMAGE_ICON, 0, 0, LR_LOADFROMFILE
+            )
+            if not hwnd:
+                hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG,   hicon)
+        except Exception as e:
+            print(f"[Icon] Erro ao aplicar ícone: {e}")
 
     def _get_work_area(self):
         """Retorna (width, height, x, y) da área de trabalho, descontando a taskbar."""
@@ -818,7 +992,7 @@ class App(tk.Tk):
         titlebar.pack_propagate(False)
 
         # Ícone + nome do app
-        tk.Label(titlebar, text="  ◈  CentralDocs", bg="#141F2D", fg="#FFFFFF",
+        tk.Label(titlebar, text="  ◈  Zynor Docs", bg="#141F2D", fg="#FFFFFF",
                  font=("Segoe UI", 10, "bold")).pack(side="left", padx=8)
 
         # Botões de controle (direita)
@@ -860,7 +1034,7 @@ class App(tk.Tk):
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
 
-        tk.Label(self._sidebar, text="CentralDocs", bg="#1E2A3A", fg="#FFFFFF",
+        tk.Label(self._sidebar, text="Zynor Docs", bg="#1E2A3A", fg="#FFFFFF",
                  font=("Segoe UI", 16, "bold"), pady=24).pack(fill="x", padx=20)
         tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=4)
 
@@ -926,6 +1100,12 @@ class App(tk.Tk):
         # Container de páginas
         self._pages_container = tk.Frame(main, bg="#F5F6FA")
         self._pages_container.pack(fill="both", expand=True)
+
+        # ── Página: Configurações ─────────────────────────────────────────────
+        self._page_config = tk.Frame(self._pages_container, bg="#F5F6FA")
+
+        # ── Página: Relatórios ────────────────────────────────────────────────
+        self._page_relatorios = tk.Frame(self._pages_container, bg="#F5F6FA")
 
         # ── Página: Documentos ────────────────────────────────────────────────
         self._page_documentos = tk.Frame(self._pages_container, bg="#F5F6FA")
@@ -1050,6 +1230,12 @@ class App(tk.Tk):
             self._page_documentos.pack(fill="both", expand=True, padx=28, pady=20)
             if show_home:
                 self._show_home()
+        elif key == "relatorios":
+            self._page_relatorios.pack(fill="both", expand=True)
+            self._show_relatorios()
+        elif key == "config":
+            self._page_config.pack(fill="both", expand=True)
+            self._show_config()
 
     # ══════════════════════════════════════════════════════════════════════════
     # Navegação interna — Documentos
@@ -1073,9 +1259,12 @@ class App(tk.Tk):
         self._clear_cards()
         folders = db_list_folders()
         COLS = self._calc_cols()
+        perms = get_current_user_permissions()
 
-        # Todas as entradas: [("add", None)] + pastas
-        entries = [("add", None)] + [("folder", f) for f in folders]
+        entries = []
+        if perms.get("can_create") or perms.get("is_admin"):
+            entries.append(("add", None))
+        entries += [("folder", f) for f in folders]
 
         row_frame = None
         for i, (kind, data) in enumerate(entries):
@@ -1152,6 +1341,9 @@ class App(tk.Tk):
                 except Exception: pass
 
         def on_right_click(event, _fid=fid):
+            perms = get_current_user_permissions()
+            if not (perms.get("can_delete") or perms.get("is_admin")):
+                return
             menu = tk.Menu(self, tearoff=0)
             menu.add_command(label="🗑  Excluir pasta",
                              command=lambda: self._remove_folder(_fid))
@@ -1169,6 +1361,11 @@ class App(tk.Tk):
         self._navigate_to(storage_path)
 
     def _remove_folder(self, folder_id: int):
+        perms = get_current_user_permissions()
+        if not perms.get("can_delete") and not perms.get("is_admin"):
+            messagebox.showwarning("Sem permissão",
+                                   "Você não tem permissão para excluir pastas.")
+            return
         dialog = ConfirmDialog(
             self,
             title="Excluir pasta",
@@ -1179,11 +1376,19 @@ class App(tk.Tk):
         )
         self.wait_window(dialog)
         if dialog.result:
+            name = sb.table("folders").select("name").eq("id", folder_id).execute()
+            folder_name = name.data[0]["name"] if name.data else str(folder_id)
             db_delete(folder_id, "folder")
+            audit("excluiu", "pasta", folder_name)
             self._refresh_sidebar()
             self._show_home()
 
     def _remove_file(self, file_id: int):
+        perms = get_current_user_permissions()
+        if not perms.get("can_delete") and not perms.get("is_admin"):
+            messagebox.showwarning("Sem permissão",
+                                   "Você não tem permissão para excluir arquivos.")
+            return
         dialog = ConfirmDialog(
             self,
             title="Excluir arquivo",
@@ -1194,20 +1399,682 @@ class App(tk.Tk):
         )
         self.wait_window(dialog)
         if dialog.result:
+            name = sb.table("files").select("name").eq("id", file_id).execute()
+            file_name = name.data[0]["name"] if name.data else str(file_id)
             db_delete(file_id, "file")
+            audit("excluiu", "arquivo", file_name)
             if self._current_path:
                 self._render_cards(self._current_path)
 
     def _refresh_sidebar(self):
         for w in self._folders_list.winfo_children():
             w.destroy()
-        # Mostra apenas pastas raiz — storage_path com um único nível (ex: "orcamentos/")
-        root_folders = [
-            f for f in db_list_folders()
-            if f["storage_path"].strip("/").count("/") == 0
-        ]
+        # Pastas raiz são as que têm parent_path vazio
+        root_folders = [f for f in db_list_folders() if f.get("parent_path", "") == ""]
         for folder in root_folders:
             self._add_folder_to_sidebar(folder)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # RELATÓRIOS
+    # ══════════════════════════════════════════════════════════════════════════
+    def _show_relatorios(self):
+        for w in self._page_relatorios.winfo_children():
+            w.destroy()
+
+        page = self._page_relatorios
+        perms = get_current_user_permissions()
+        if not perms.get("is_admin"):
+            tk.Label(page, text="⚠  Acesso restrito a administradores.",
+                     bg="#F5F6FA", fg="#E53935", font=("Segoe UI", 12)).pack(pady=60)
+            return
+
+        # Cabeçalho
+        bar = tk.Frame(page, bg="#F5F6FA")
+        bar.pack(fill="x", padx=28, pady=(20, 0))
+        tk.Label(bar, text="Relatórios", bg="#F5F6FA", fg="#1E2A3A",
+                 font=("Segoe UI", 15, "bold")).pack(side="left")
+        tk.Button(bar, text="⬇  Exportar Excel", bg="#27AE60", fg="#FFFFFF",
+                  relief="flat", font=("Segoe UI", 10), cursor="hand2",
+                  activebackground="#1E8449", padx=14, pady=6,
+                  command=self._export_audit_excel).pack(side="right")
+        tk.Button(bar, text="🔄  Atualizar", bg="#4A90E2", fg="#FFFFFF",
+                  relief="flat", font=("Segoe UI", 10), cursor="hand2",
+                  activebackground="#357ABD", padx=14, pady=6,
+                  command=self._show_relatorios).pack(side="right", padx=(0, 8))
+
+        # Tabela
+        wrap = tk.Frame(page, bg="#FFFFFF", highlightthickness=1,
+                        highlightbackground="#E0E6EF")
+        wrap.pack(fill="both", expand=True, padx=28, pady=16)
+
+        COLS = [("Data / Hora", 18), ("Usuário", 18), ("Ação", 10), ("Tipo", 10), ("Item", 28)]
+
+        head = tk.Frame(wrap, bg="#F5F6FA")
+        head.pack(fill="x")
+        for col, cw in COLS:
+            tk.Label(head, text=col, bg="#F5F6FA", fg="#6B7A90",
+                     font=("Segoe UI", 10, "bold"), anchor="w",
+                     padx=12, pady=10, width=cw).pack(side="left")
+        tk.Frame(wrap, bg="#E0E6EF", height=1).pack(fill="x")
+
+        # Scroll
+        container = tk.Frame(wrap, bg="#FFFFFF")
+        container.pack(fill="both", expand=True)
+        canvas = tk.Canvas(container, bg="#FFFFFF", highlightthickness=0)
+        sb_scroll = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg="#FFFFFF")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb_scroll.set)
+        sb_scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        ACTION_COLORS = {
+            "login":      "#2E7D32",
+            "logout":     "#6B7A90",
+            "abriu":      "#1565C0",
+            "visualizou": "#6A1B9A",
+            "criou":      "#E65100",
+            "excluiu":    "#C62828",
+        }
+
+        logs = audit_list(500)
+        if not logs:
+            tk.Label(inner, text="Nenhum registro encontrado.",
+                     bg="#FFFFFF", fg="#C0C8D4", font=("Segoe UI", 11)).pack(pady=40)
+        else:
+            for i, row in enumerate(logs):
+                bg = "#FFFFFF" if i % 2 == 0 else "#F9FAFB"
+                r = tk.Frame(inner, bg=bg)
+                r.pack(fill="x")
+                try:
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+                    dt_str = dt.astimezone().strftime("%d/%m/%Y %H:%M:%S")
+                except Exception:
+                    dt_str = row.get("created_at", "")
+                action = row.get("action", "")
+                color  = ACTION_COLORS.get(action, "#1E2A3A")
+                vals = [
+                    (dt_str,                    18, "#1E2A3A"),
+                    (row.get("user_name", ""),  18, "#1E2A3A"),
+                    (action.capitalize(),        10, color),
+                    (row.get("target_type", "") or "", 10, "#6B7A90"),
+                    (row.get("target_name", "") or "", 28, "#1E2A3A"),
+                ]
+                for text, cw, fg in vals:
+                    tk.Label(r, text=text, bg=bg, fg=fg,
+                             font=("Segoe UI", 10), anchor="w",
+                             padx=12, pady=8, width=cw).pack(side="left")
+
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+    def _export_audit_excel(self):
+        try:
+            import openpyxl
+            from datetime import datetime, timezone
+        except ImportError:
+            messagebox.showerror("Erro", "openpyxl não instalado.")
+            return
+
+        logs = audit_list(5000)
+        if not logs:
+            messagebox.showinfo("Atenção", "Nenhum registro para exportar.")
+            return
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Audit Log"
+        ws.append(["Data / Hora", "Usuário", "Ação", "Tipo", "Item"])
+        for row in logs:
+            try:
+                dt = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+                dt_str = dt.astimezone().strftime("%d/%m/%Y %H:%M:%S")
+            except Exception:
+                dt_str = row.get("created_at", "")
+            ws.append([
+                dt_str,
+                row.get("user_name", ""),
+                row.get("action", "").capitalize(),
+                row.get("target_type", "") or "",
+                row.get("target_name", "") or "",
+            ])
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = 25
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile="relatorio_audit.xlsx",
+        )
+        if path:
+            wb.save(path)
+            messagebox.showinfo("Exportado", f"Arquivo salvo em:\n{path}")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # CONFIGURAÇÕES
+    # ══════════════════════════════════════════════════════════════════════════
+    def _show_config(self):
+        for w in self._page_config.winfo_children():
+            w.destroy()
+
+        perms = get_current_user_permissions()
+        if not perms.get("is_admin"):
+            tk.Label(self._page_config, text="⛔  Acesso restrito a administradores.",
+                     bg="#F5F6FA", fg="#E53935", font=("Segoe UI", 13)).pack(pady=80)
+            return
+
+        # ── Abas ──────────────────────────────────────────────────────────────
+        tab_bar = tk.Frame(self._page_config, bg="#F5F6FA")
+        tab_bar.pack(fill="x", padx=28, pady=(20, 0))
+
+        content_area = tk.Frame(self._page_config, bg="#F5F6FA")
+        content_area.pack(fill="both", expand=True, padx=28, pady=12)
+
+        self._config_tab = tk.StringVar(value="usuarios")
+
+        def switch_tab(tab):
+            self._config_tab.set(tab)
+            for t, btn in tab_btns.items():
+                if t == tab:
+                    btn.config(bg="#FFFFFF", fg="#1E2A3A",
+                               highlightbackground="#4A90E2", highlightthickness=2)
+                else:
+                    btn.config(bg="#F5F6FA", fg="#6B7A90",
+                               highlightbackground="#E0E6EF", highlightthickness=1)
+            for w in content_area.winfo_children():
+                w.destroy()
+            if tab == "usuarios":
+                self._render_config_usuarios(content_area)
+            elif tab == "grupos":
+                self._render_config_grupos(content_area)
+
+        tab_btns = {}
+        for key, label in [("usuarios", "👤  Usuários"), ("grupos", "🔑  Grupos")]:
+            btn = tk.Button(tab_bar, text=label, relief="flat", font=("Segoe UI", 10),
+                            cursor="hand2", padx=16, pady=7,
+                            command=lambda k=key: switch_tab(k))
+            btn.pack(side="left", padx=(0, 6))
+            tab_btns[key] = btn
+
+        switch_tab("usuarios")
+
+    # ── Aba: Usuários ─────────────────────────────────────────────────────────
+    def _render_config_usuarios(self, parent):
+        for w in parent.winfo_children():
+            w.destroy()
+
+        # Toolbar
+        bar = tk.Frame(parent, bg="#F5F6FA")
+        bar.pack(fill="x", pady=(0, 12))
+        tk.Label(bar, text="Usuários do sistema", bg="#F5F6FA", fg="#1E2A3A",
+                 font=("Segoe UI", 13, "bold")).pack(side="left")
+        tk.Button(bar, text="+ Novo Usuário", bg="#4A90E2", fg="#FFFFFF",
+                  relief="flat", font=("Segoe UI", 10), cursor="hand2",
+                  activebackground="#357ABD", padx=14, pady=6,
+                  command=lambda: self._open_user_dialog(parent)).pack(side="right")
+
+        # Tabela
+        wrap = tk.Frame(parent, bg="#FFFFFF", highlightthickness=1,
+                        highlightbackground="#E0E6EF")
+        wrap.pack(fill="both", expand=True)
+
+        COL_WIDTHS = [("Nome", 22), ("E-mail", 30), ("Grupo", 18)]
+
+        # Cabeçalho
+        head = tk.Frame(wrap, bg="#F5F6FA")
+        head.pack(fill="x")
+        for col, cw in COL_WIDTHS:
+            tk.Label(head, text=col, bg="#F5F6FA", fg="#6B7A90",
+                     font=("Segoe UI", 9, "bold"), anchor="w",
+                     padx=16, pady=10, width=cw).pack(side="left")
+        tk.Frame(wrap, bg="#E0E6EF", height=1).pack(fill="x")
+
+        # Linhas
+        self._user_rows_frame = tk.Frame(wrap, bg="#FFFFFF")
+        self._user_rows_frame.pack(fill="both", expand=True)
+        self._render_user_rows(parent)
+
+    def _render_user_rows(self, parent):
+        COL_WIDTHS = [("name", 22), ("email", 30), ("group_name", 18)]
+        for w in self._user_rows_frame.winfo_children():
+            w.destroy()
+        users = user_list()
+        if not users:
+            tk.Label(self._user_rows_frame, text="Nenhum usuário cadastrado.",
+                     bg="#FFFFFF", fg="#C0C8D4", font=("Segoe UI", 11)).pack(pady=40)
+            return
+        for i, u in enumerate(users):
+            bg = "#FFFFFF" if i % 2 == 0 else "#F9FAFB"
+            row = tk.Frame(self._user_rows_frame, bg=bg)
+            row.pack(fill="x")
+            for key, cw in COL_WIDTHS:
+                tk.Label(row, text=u.get(key, ""), bg=bg, fg="#1E2A3A",
+                         font=("Segoe UI", 10), anchor="w",
+                         padx=16, pady=10, width=cw).pack(side="left")
+            acts = tk.Frame(row, bg=bg)
+            acts.pack(side="right", padx=12)
+            tk.Button(acts, text="✏️", bg=bg, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 10), activebackground="#E8F0FE",
+                      command=lambda uid=u["id"]: self._open_user_dialog(parent, uid)
+                      ).pack(side="left")
+            is_self = u["id"] == CURRENT_USER.get("id")
+            tk.Button(acts, text="✕", bg=bg, fg="#E53935" if not is_self else "#C0C8D4",
+                      relief="flat", cursor="hand2" if not is_self else "arrow",
+                      font=("Segoe UI", 10, "bold"), activebackground="#FDECEA",
+                      state="normal" if not is_self else "disabled",
+                      command=lambda uid=u["id"]: self._delete_user(uid, parent)
+                      ).pack(side="left")
+
+    def _delete_user(self, user_id: str, parent):
+        dialog = ConfirmDialog(self, "Excluir usuário",
+                               "Deseja remover este usuário?",
+                               "Esta ação não pode ser desfeita.",
+                               confirm_text="Excluir")
+        self.wait_window(dialog)
+        if dialog.result:
+            user_delete(user_id)
+            self._render_user_rows(parent)
+
+    def _open_user_dialog(self, parent, user_id: str = None):
+        groups  = group_list()
+        editing = None
+        if user_id:
+            users   = user_list()
+            editing = next((u for u in users if u["id"] == user_id), None)
+
+        self.update_idletasks()
+        wx, wy = self.winfo_x(), self.winfo_y()
+        ww, wh = self.winfo_width(), self.winfo_height()
+
+        ov = tk.Toplevel(self)
+        ov.overrideredirect(True)
+        ov.configure(bg="#000000")
+        ov.attributes("-alpha", 0.4)
+        ov.geometry(f"{ww}x{wh}+{wx}+{wy}")
+        ov.lift()
+
+        dialog = tk.Toplevel(self)
+        dialog.configure(bg="#F5F6FA")
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        dialog.overrideredirect(True)
+        w, h = 440, 500
+        x = wx + (ww - w) // 2
+        y = wy + (wh - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        dialog.configure(highlightthickness=1, highlightbackground="#D0D7E2")
+        dialog.lift()
+
+        # Header
+        header = tk.Frame(dialog, bg="#1E2A3A", height=52)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        title = "Editar Usuário" if editing else "Novo Usuário"
+        tk.Label(header, text=f"  {title}", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=16, pady=14)
+        close = tk.Label(header, text="✕", bg="#1E2A3A", fg="#6B8099",
+                         font=("Segoe UI", 11), cursor="hand2", padx=14)
+        close.pack(side="right")
+
+        def _close():
+            try: ov.destroy()
+            except: pass
+            dialog.destroy()
+
+        close.bind("<Button-1>", lambda _: _close())
+        close.bind("<Enter>", lambda _: close.config(fg="#FFFFFF"))
+        close.bind("<Leave>", lambda _: close.config(fg="#6B8099"))
+
+        body = tk.Frame(dialog, bg="#F5F6FA")
+        body.pack(fill="both", expand=True, padx=24, pady=16)
+
+        vars_ = {}
+
+        def _make_entry(label, key, secret=False, value=""):
+            tk.Label(body, text=label, bg="#F5F6FA", fg="#6B7A90",
+                     font=("Segoe UI", 9)).pack(anchor="w")
+            v = tk.StringVar(value=value)
+            e = tk.Entry(body, textvariable=v, show="•" if secret else "", font=("Segoe UI", 10),
+                         relief="flat", bg="#FFFFFF", fg="#1E2A3A",
+                         insertbackground="#1E2A3A", highlightthickness=1,
+                         highlightbackground="#D0D7E2", highlightcolor="#4A90E2")
+            e.pack(fill="x", ipady=6, pady=(3, 10))
+            vars_[key] = v
+
+        _make_entry("Nome", "name", value=editing.get("name", "") if editing else "")
+        _make_entry("E-mail", "email", value=editing.get("email", "") if editing else "")
+
+        # Senha apenas na inclusão
+        if not editing:
+            _make_entry("Senha", "password", secret=True)
+            _make_entry("Confirmar senha", "password2", secret=True)
+
+        # Grupo
+        tk.Label(body, text="Grupo", bg="#F5F6FA", fg="#6B7A90",
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        group_var = tk.StringVar()
+        group_map = {g["name"]: g["id"] for g in groups}
+        cb = ttk.Combobox(body, textvariable=group_var, state="readonly",
+                          values=list(group_map.keys()), font=("Segoe UI", 10))
+        cb.pack(fill="x", pady=(3, 0))
+        if editing and editing.get("group_name"):
+            group_var.set(editing["group_name"])
+        elif groups:
+            group_var.set(groups[0]["name"])
+
+        # Botão "Alterar Senha" disponível apenas na edição
+        if editing:
+            tk.Button(body, text="🔑  Alterar Senha", bg="#E8EDF4", fg="#1E2A3A",
+                      relief="flat", font=("Segoe UI", 9), cursor="hand2",
+                      anchor="w", pady=6,
+                      command=lambda: self._open_change_password_dialog(editing["id"])
+                      ).pack(fill="x", pady=(14, 0))
+
+        def _save():
+            name  = vars_["name"].get().strip()
+            email = vars_["email"].get().strip()
+            grp   = group_var.get()
+
+            if not name or not email:
+                messagebox.showwarning("Atenção", "Nome e e-mail são obrigatórios.", parent=dialog)
+                return
+            if not grp:
+                messagebox.showwarning("Atenção", "Selecione um grupo.", parent=dialog)
+                return
+            group_id = group_map[grp]
+
+            if editing:
+                user_update(editing["id"], name, email, None, group_id)
+            else:
+                pwd  = vars_["password"].get().strip()
+                pwd2 = vars_["password2"].get().strip()
+                if not pwd:
+                    messagebox.showwarning("Atenção", "Informe uma senha.", parent=dialog)
+                    return
+                if pwd != pwd2:
+                    messagebox.showwarning("Atenção", "As senhas não coincidem.", parent=dialog)
+                    return
+                user_create(name, email, pwd, group_id)
+            _close()
+            self._render_user_rows(parent)
+
+        btn_row = tk.Frame(dialog, bg="#F5F6FA")
+        btn_row.pack(fill="x", padx=24, pady=(0, 16))
+        tk.Button(btn_row, text="Cancelar", bg="#E8EDF4", fg="#1E2A3A", relief="flat",
+                  font=("Segoe UI", 10), cursor="hand2", padx=14, pady=6,
+                  command=_close).pack(side="right", padx=(8, 0))
+        tk.Button(btn_row, text="Salvar", bg="#27AE60", fg="#FFFFFF", relief="flat",
+                  font=("Segoe UI", 10, "bold"), cursor="hand2",
+                  activebackground="#1E8449", padx=14, pady=6,
+                  command=_save).pack(side="right")
+        dialog.bind("<Escape>", lambda _: _close())
+
+    def _open_change_password_dialog(self, user_id: str):
+        self.update_idletasks()
+        wx, wy = self.winfo_x(), self.winfo_y()
+        ww, wh = self.winfo_width(), self.winfo_height()
+
+        ov = tk.Toplevel(self)
+        ov.overrideredirect(True)
+        ov.configure(bg="#000000")
+        ov.attributes("-alpha", 0.4)
+        ov.geometry(f"{ww}x{wh}+{wx}+{wy}")
+        ov.lift()
+
+        dialog = tk.Toplevel(self)
+        dialog.configure(bg="#F5F6FA")
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        dialog.overrideredirect(True)
+        w, h = 400, 280
+        x = wx + (ww - w) // 2
+        y = wy + (wh - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        dialog.configure(highlightthickness=1, highlightbackground="#D0D7E2")
+        dialog.lift()
+
+        header = tk.Frame(dialog, bg="#1E2A3A", height=52)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(header, text="  Alterar Senha", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=16, pady=14)
+        close_lbl = tk.Label(header, text="✕", bg="#1E2A3A", fg="#6B8099",
+                             font=("Segoe UI", 11), cursor="hand2", padx=14)
+        close_lbl.pack(side="right")
+
+        def _close():
+            try: ov.destroy()
+            except: pass
+            dialog.destroy()
+
+        close_lbl.bind("<Button-1>", lambda _: _close())
+        close_lbl.bind("<Enter>", lambda _: close_lbl.config(fg="#FFFFFF"))
+        close_lbl.bind("<Leave>", lambda _: close_lbl.config(fg="#6B8099"))
+
+        body = tk.Frame(dialog, bg="#F5F6FA")
+        body.pack(fill="both", expand=True, padx=24, pady=16)
+
+        pwd_var  = tk.StringVar()
+        pwd2_var = tk.StringVar()
+
+        for label, var in [("Nova Senha", pwd_var), ("Confirmar Nova Senha", pwd2_var)]:
+            tk.Label(body, text=label, bg="#F5F6FA", fg="#6B7A90",
+                     font=("Segoe UI", 9)).pack(anchor="w")
+            tk.Entry(body, textvariable=var, show="•", font=("Segoe UI", 10),
+                     relief="flat", bg="#FFFFFF", fg="#1E2A3A",
+                     insertbackground="#1E2A3A", highlightthickness=1,
+                     highlightbackground="#D0D7E2", highlightcolor="#4A90E2"
+                     ).pack(fill="x", ipady=6, pady=(3, 10))
+
+        def _save_pwd():
+            pwd  = pwd_var.get().strip()
+            pwd2 = pwd2_var.get().strip()
+            if not pwd:
+                messagebox.showwarning("Atenção", "Informe a nova senha.", parent=dialog)
+                return
+            if pwd != pwd2:
+                messagebox.showwarning("Atenção", "As senhas não coincidem.", parent=dialog)
+                return
+            user_update(user_id, None, None, pwd, None)
+            _close()
+            messagebox.showinfo("Sucesso", "Senha alterada com sucesso.")
+
+        btn_row = tk.Frame(dialog, bg="#F5F6FA")
+        btn_row.pack(fill="x", padx=24, pady=(0, 16))
+        tk.Button(btn_row, text="Cancelar", bg="#E8EDF4", fg="#1E2A3A", relief="flat",
+                  font=("Segoe UI", 10), cursor="hand2", padx=14, pady=6,
+                  command=_close).pack(side="right", padx=(8, 0))
+        tk.Button(btn_row, text="Salvar", bg="#27AE60", fg="#FFFFFF", relief="flat",
+                  font=("Segoe UI", 10, "bold"), cursor="hand2",
+                  activebackground="#1E8449", padx=14, pady=6,
+                  command=_save_pwd).pack(side="right")
+        dialog.bind("<Escape>", lambda _: _close())
+
+    # ── Aba: Grupos ───────────────────────────────────────────────────────────
+    def _render_config_grupos(self, parent):
+        for w in parent.winfo_children():
+            w.destroy()
+
+        bar = tk.Frame(parent, bg="#F5F6FA")
+        bar.pack(fill="x", pady=(0, 12))
+        tk.Label(bar, text="Grupos e permissões", bg="#F5F6FA", fg="#1E2A3A",
+                 font=("Segoe UI", 13, "bold")).pack(side="left")
+        tk.Button(bar, text="+ Novo Grupo", bg="#4A90E2", fg="#FFFFFF",
+                  relief="flat", font=("Segoe UI", 10), cursor="hand2",
+                  activebackground="#357ABD", padx=14, pady=6,
+                  command=lambda: self._open_group_dialog(parent)).pack(side="right")
+
+        wrap = tk.Frame(parent, bg="#FFFFFF", highlightthickness=1,
+                        highlightbackground="#E0E6EF")
+        wrap.pack(fill="both", expand=True)
+
+        # mesma fonte no cabeçalho e nas linhas → width em caracteres é consistente
+        FONT = ("Segoe UI", 10)
+        GROUP_COLS = [("Grupo", 20, "w"), ("Visualizar", 12, "center"), ("Criar", 9, "center"),
+                      ("Editar", 9, "center"), ("Excluir", 9, "center"), ("Admin", 9, "center")]
+
+        head = tk.Frame(wrap, bg="#F5F6FA")
+        head.pack(fill="x")
+        for col, cw, anch in GROUP_COLS:
+            tk.Label(head, text=col, bg="#F5F6FA", fg="#6B7A90",
+                     font=FONT, anchor=anch, justify="center" if anch == "center" else "left",
+                     padx=0, pady=10, width=cw).pack(side="left")
+        tk.Frame(wrap, bg="#E0E6EF", height=1).pack(fill="x")
+
+        self._group_rows_frame = tk.Frame(wrap, bg="#FFFFFF")
+        self._group_rows_frame.pack(fill="both", expand=True)
+        self._render_group_rows(parent)
+
+    def _render_group_rows(self, parent):
+        FONT = ("Segoe UI", 10)
+        GROUP_COLS = [("Grupo", 20, "w"), ("Visualizar", 12, "center"), ("Criar", 9, "center"),
+                      ("Editar", 9, "center"), ("Excluir", 9, "center"), ("Admin", 9, "center")]
+        FLAG_KEYS = ["can_view", "can_create", "can_edit", "can_delete", "is_admin"]
+
+        for w in self._group_rows_frame.winfo_children():
+            w.destroy()
+        groups = group_list()
+        if not groups:
+            tk.Label(self._group_rows_frame, text="Nenhum grupo cadastrado.",
+                     bg="#FFFFFF", fg="#C0C8D4", font=FONT).pack(pady=40)
+            return
+        for i, g in enumerate(groups):
+            bg = "#FFFFFF" if i % 2 == 0 else "#F9FAFB"
+            row = tk.Frame(self._group_rows_frame, bg=bg)
+            row.pack(fill="x")
+            tk.Label(row, text=g["name"], bg=bg, fg="#1E2A3A",
+                     font=(FONT[0], FONT[1], "bold"), anchor="w",
+                     padx=12, pady=10, width=20).pack(side="left")
+            for flag, (_, cw, _) in zip(FLAG_KEYS, GROUP_COLS[1:]):
+                val = "☑" if g.get(flag) else "—"
+                tk.Label(row, text=val, bg=bg,
+                         fg="#2E7D32" if g.get(flag) else "#AABBCC",
+                         font=FONT, anchor="center", justify="center",
+                         padx=0, pady=10, width=cw).pack(side="left", fill="x", expand=False)
+            acts = tk.Frame(row, bg=bg)
+            acts.pack(side="right", padx=12)
+            tk.Button(acts, text="✏️", bg=bg, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 10), activebackground="#E8F0FE",
+                      command=lambda gid=g["id"]: self._open_group_dialog(parent, gid)
+                      ).pack(side="left")
+            tk.Button(acts, text="✕", bg=bg, fg="#E53935", relief="flat",
+                      cursor="hand2", font=("Segoe UI", 10, "bold"),
+                      activebackground="#FDECEA",
+                      command=lambda gid=g["id"]: self._delete_group(gid, parent)
+                      ).pack(side="left")
+
+    def _delete_group(self, group_id: str, parent):
+        dialog = ConfirmDialog(self, "Excluir grupo", "Deseja remover este grupo?",
+                               "Os usuários deste grupo ficarão sem grupo.",
+                               confirm_text="Excluir")
+        self.wait_window(dialog)
+        if dialog.result:
+            group_delete(group_id)
+            self._render_group_rows(parent)
+
+    def _open_group_dialog(self, parent, group_id: str = None):
+        groups  = group_list()
+        editing = next((g for g in groups if g["id"] == group_id), None) if group_id else None
+
+        self.update_idletasks()
+        wx, wy = self.winfo_x(), self.winfo_y()
+        ww, wh = self.winfo_width(), self.winfo_height()
+
+        ov = tk.Toplevel(self)
+        ov.overrideredirect(True)
+        ov.configure(bg="#000000")
+        ov.attributes("-alpha", 0.4)
+        ov.geometry(f"{ww}x{wh}+{wx}+{wy}")
+        ov.lift()
+
+        dialog = tk.Toplevel(self)
+        dialog.overrideredirect(True)
+        dialog.configure(bg="#F5F6FA")
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        w, h = 380, 440
+        x = wx + (ww - w) // 2
+        y = wy + (wh - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        dialog.configure(highlightthickness=1, highlightbackground="#D0D7E2")
+        dialog.lift()
+
+        header = tk.Frame(dialog, bg="#1E2A3A", height=52)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        title = "Editar Grupo" if editing else "Novo Grupo"
+        tk.Label(header, text=f"  {title}", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 12, "bold")).pack(side="left", padx=16, pady=14)
+        close = tk.Label(header, text="✕", bg="#1E2A3A", fg="#6B8099",
+                         font=("Segoe UI", 11), cursor="hand2", padx=14)
+        close.pack(side="right")
+
+        def _close():
+            try: ov.destroy()
+            except: pass
+            dialog.destroy()
+
+        close.bind("<Button-1>", lambda _: _close())
+        close.bind("<Enter>", lambda _: close.config(fg="#FFFFFF"))
+        close.bind("<Leave>", lambda _: close.config(fg="#6B8099"))
+
+        body = tk.Frame(dialog, bg="#F5F6FA")
+        body.pack(fill="both", expand=True, padx=24, pady=16)
+
+        tk.Label(body, text="Nome do grupo", bg="#F5F6FA", fg="#6B7A90",
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        name_var = tk.StringVar(value=editing["name"] if editing else "")
+        tk.Entry(body, textvariable=name_var, font=("Segoe UI", 11),
+                 relief="flat", bg="#FFFFFF", fg="#1E2A3A",
+                 insertbackground="#1E2A3A", highlightthickness=1,
+                 highlightbackground="#D0D7E2", highlightcolor="#4A90E2"
+                 ).pack(fill="x", ipady=6, pady=(3, 16))
+
+        tk.Label(body, text="Permissões", bg="#F5F6FA", fg="#6B7A90",
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 8))
+
+        perm_vars = {}
+        perms_def = [
+            ("can_view",   "👁  Visualizar arquivos e pastas"),
+            ("can_create", "➕  Criar pastas e arquivos"),
+            ("can_edit",   "✏️  Editar arquivos"),
+            ("can_delete", "🗑  Excluir arquivos e pastas"),
+            ("is_admin",   "⚙️  Administrador do sistema"),
+        ]
+        for key, label in perms_def:
+            v = tk.BooleanVar(value=editing.get(key, False) if editing else False)
+            cb_frame = tk.Frame(body, bg="#F5F6FA")
+            cb_frame.pack(anchor="w", pady=2)
+            tk.Checkbutton(cb_frame, variable=v, bg="#F5F6FA",
+                           activebackground="#F5F6FA").pack(side="left")
+            tk.Label(cb_frame, text=label, bg="#F5F6FA", fg="#1E2A3A",
+                     font=("Segoe UI", 10)).pack(side="left")
+            perm_vars[key] = v
+
+        def _save():
+            name = name_var.get().strip()
+            if not name:
+                messagebox.showwarning("Atenção", "Informe um nome para o grupo.", parent=dialog)
+                return
+            kwargs = {k: v.get() for k, v in perm_vars.items()}
+            if editing:
+                group_update(editing["id"], name, **kwargs)
+            else:
+                group_create(name, **kwargs)
+            _close()
+            self._render_group_rows(parent)
+
+        btn_row = tk.Frame(dialog, bg="#F5F6FA")
+        btn_row.pack(fill="x", padx=24, pady=(0, 16))
+        tk.Button(btn_row, text="Cancelar", bg="#E8EDF4", fg="#1E2A3A", relief="flat",
+                  font=("Segoe UI", 10), cursor="hand2", padx=14, pady=6,
+                  command=_close).pack(side="right", padx=(8, 0))
+        tk.Button(btn_row, text="Salvar", bg="#27AE60", fg="#FFFFFF", relief="flat",
+                  font=("Segoe UI", 10, "bold"), cursor="hand2",
+                  activebackground="#1E8449", padx=14, pady=6,
+                  command=_save).pack(side="right")
+        dialog.bind("<Escape>", lambda _: _close())
 
     def _navigate_to(self, path: str, push_history=True):
         if push_history and self._current_path and self._current_path != path:
@@ -1242,11 +2109,12 @@ class App(tk.Tk):
             back.pack(side="left", padx=(0, 12))
             back.bind("<Button-1>", lambda _: self._go_back())
 
-        # Partes do caminho
-        # Monta breadcrumb a partir do storage_path
-        # ex: "documentos/orcamentos/2024/" → ["documentos", "orcamentos", "2024"]
+        # Partes do caminho — oculta o tenant_id (primeiro segmento)
         parts = [p for p in path.strip("/").split("/") if p]
-        accumulated = ""
+        # remove o segmento do tenant_id do breadcrumb visual
+        if parts and parts[0] == TENANT_ID:
+            parts = parts[1:]
+        accumulated = f"{TENANT_ID}/"
 
         for i, part in enumerate(parts):
             accumulated = accumulated + part + "/"
@@ -1271,12 +2139,15 @@ class App(tk.Tk):
 
     def _render_cards(self, storage_path: str):
         self._clear_cards()
+        perms = get_current_user_permissions()
 
         entries = db_list_children(storage_path)
         entries_sorted = sorted(entries, key=lambda e: (e["type"] != "folder", e["name"].lower()))
 
-        # Botão "Novo Arquivo" sempre primeiro no grid
-        all_items = [("add_file", None)] + [("rec", r) for r in entries_sorted]
+        all_items = []
+        if perms.get("can_create") or perms.get("is_admin"):
+            all_items.append(("add_file", None))
+        all_items += [("rec", r) for r in entries_sorted]
 
         COLS = self._calc_cols()
         row_frame = None
@@ -1392,13 +2263,19 @@ class App(tk.Tk):
                 except Exception: pass
 
         def on_right_click(event, _fid=fid):
+            perms = get_current_user_permissions()
             menu = tk.Menu(self, tearoff=0)
-            menu.add_command(label="📂  Abrir arquivo",
-                             command=lambda: self._open_file(rec))
-            menu.add_separator()
-            menu.add_command(label="🗑  Excluir arquivo",
-                             command=lambda: self._remove_file(_fid))
-            menu.tk_popup(event.x_root, event.y_root)
+            can_open = perms.get("is_admin") or (perms.get("can_view") and perms.get("can_edit"))
+            if can_open:
+                menu.add_command(label="📂  Abrir arquivo",
+                                 command=lambda: self._open_file(rec))
+            if perms.get("can_delete") or perms.get("is_admin"):
+                if can_open:
+                    menu.add_separator()
+                menu.add_command(label="🗑  Excluir arquivo",
+                                 command=lambda: self._remove_file(_fid))
+            if menu.index("end") is not None:
+                menu.tk_popup(event.x_root, event.y_root)
 
         for w in [card, body, top_row] + list(top_row.winfo_children()) + list(body.winfo_children()):
             w.bind("<Enter>", on_enter)
@@ -1410,6 +2287,10 @@ class App(tk.Tk):
     # Ações
     # ══════════════════════════════════════════════════════════════════════════
     def _open_new_folder_dialog(self):
+        perms = get_current_user_permissions()
+        if not perms.get("can_create") and not perms.get("is_admin"):
+            messagebox.showwarning("Sem permissão", "Você não tem permissão para criar pastas.")
+            return
         parent_sp = self._current_path or ""
         dialog = NewFolderDialog(self, parent_path=parent_sp)
         self.wait_window(dialog)
@@ -1426,6 +2307,7 @@ class App(tk.Tk):
                 )
                 return
             db_create_folder(foldername, parent_path=parent_sp)
+            audit("criou", "pasta", foldername)
             self._refresh_sidebar()
             if parent_sp:
                 self._render_cards(parent_sp)
@@ -1450,6 +2332,10 @@ class App(tk.Tk):
         self._navigate_to(storage_path)
 
     def _open_new_file_dialog(self):
+        perms = get_current_user_permissions()
+        if not perms.get("can_create") and not perms.get("is_admin"):
+            messagebox.showwarning("Sem permissão", "Você não tem permissão para criar arquivos.")
+            return
         if not self._current_path:
             messagebox.showwarning("Atenção", "Abra uma pasta primeiro para adicionar um arquivo.")
             return
@@ -1471,6 +2357,7 @@ class App(tk.Tk):
             return
 
         rec = db_create_file(filename, parent_path=self._current_path)
+        audit("criou", "arquivo", filename)
 
         if dialog.result["mode"] == "upload":
             storage_upload(rec["storage_path"], dialog.result["local_path"])
@@ -1495,10 +2382,41 @@ class App(tk.Tk):
 
     def _open_file(self, rec: dict):
         """Abre o arquivo verificando trava. Baixa do R2 se necessário."""
+        perms = get_current_user_permissions()
+        is_admin   = perms.get("is_admin", False)
+        can_view   = perms.get("can_view", False)
+        can_edit   = perms.get("can_edit", False)
+        read_only  = False  # abre sem travar e sem sincronizar
+
+        if not is_admin:
+            if not can_view:
+                messagebox.showwarning("Sem permissão", "Você não tem permissão para visualizar arquivos.")
+                return
+            if not can_edit:
+                # Modo somente leitura: abre localmente, sem trava e sem sync de volta
+                read_only = True
+
+        if read_only:
+            dialog = InfoDialog(
+                self,
+                title="Modo somente leitura",
+                message="Você não tem permissão para editar este arquivo.",
+                submessage="Quaisquer alterações feitas ficarão apenas no seu computador\ne poderão ser sobrescritas na próxima sincronização.",
+                icon="⚠️",
+                icon_color="#E67E22",
+            )
+            self.wait_window(dialog)
+            local = storage_download(rec["storage_path"], force=True)
+            if local and os.path.exists(local):
+                audit("visualizou", "arquivo", rec["name"])
+                os.startfile(local)
+            else:
+                messagebox.showerror("Erro", "Não foi possível abrir o arquivo.")
+            return
+
         # Verifica se está travado por outro usuário
         lock = file_get_lock_info(rec["id"])
         if lock and lock["locked_by"] != CURRENT_USER.get("id"):
-            # Formata a data
             locked_at = lock.get("locked_at", "")
             if locked_at:
                 try:
@@ -1523,9 +2441,10 @@ class App(tk.Tk):
             messagebox.showwarning("Arquivo em uso", "Não foi possível abrir o arquivo agora.")
             return
 
-        # Baixa e abre
-        local = storage_download(rec["storage_path"])
+        # Baixa do R2 — sem force para preservar edições locais ainda não sincronizadas
+        local = storage_download(rec["storage_path"], force=False)
         if local and os.path.exists(local):
+            audit("abriu", "arquivo", rec["name"])
             os.startfile(local)
             self._open_files.add(rec["id"])
             # Thread que monitora quando o arquivo for fechado, sincroniza com R2 e libera trava
@@ -1796,11 +2715,21 @@ class App(tk.Tk):
             self._show_clientes()
 
 
+def _load_user_history() -> list[str]:
+    try:
+        with open(LAST_USER_FILE, "r", encoding="utf-8") as f:
+            return [e.strip() for e in f.read().splitlines() if e.strip()]
+    except Exception:
+        return []
+
+
 # ── Tela de Login ─────────────────────────────────────────────────────────────
 class LoginWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("CentralDocs")
+        self.title("Zynor Docs")
+        if os.path.exists(_ICON_FILE):
+            self.iconbitmap(_ICON_FILE)
         self.configure(bg="#1E2A3A")
         self.overrideredirect(True)
         self.resizable(False, False)
@@ -1816,13 +2745,25 @@ class LoginWindow(tk.Tk):
         self.after(50, self._fix_taskbar)
 
     def _fix_taskbar(self):
-        GWL_EXSTYLE    = -20
+        GWL_EXSTYLE      = -20
         WS_EX_APPWINDOW  = 0x00040000
         WS_EX_TOOLWINDOW = 0x00000080
         hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
         style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
         ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        if os.path.exists(_ICON_FILE):
+            try:
+                LR_LOADFROMFILE = 0x00000010
+                IMAGE_ICON = 1
+                WM_SETICON = 0x0080
+                hicon = ctypes.windll.user32.LoadImageW(
+                    None, _ICON_FILE, IMAGE_ICON, 0, 0, LR_LOADFROMFILE
+                )
+                ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 0, hicon)
+                ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, 1, hicon)
+            except Exception as e:
+                print(f"[Icon] {e}")
         self.withdraw()
         self.after(10, self.deiconify)
 
@@ -1848,7 +2789,7 @@ class LoginWindow(tk.Tk):
         # Logo / nome
         tk.Label(body, text="◈", bg="#1E2A3A", fg="#4A90E2",
                  font=("Segoe UI", 36)).pack(pady=(20, 0))
-        tk.Label(body, text="CentralDocs", bg="#1E2A3A", fg="#FFFFFF",
+        tk.Label(body, text="Zynor Docs", bg="#1E2A3A", fg="#FFFFFF",
                  font=("Segoe UI", 22, "bold")).pack()
         tk.Label(body, text="Gestão de Documentos", bg="#1E2A3A", fg="#6B8099",
                  font=("Segoe UI", 10)).pack(pady=(2, 32))
@@ -1867,8 +2808,56 @@ class LoginWindow(tk.Tk):
                               font=("Segoe UI", 11), insertbackground="#FFFFFF",
                               highlightthickness=0)
         user_entry.pack(side="left", fill="x", expand=True, ipady=10, padx=(4, 8))
-        user_entry.bind("<FocusIn>",  lambda _: user_frame.config(highlightbackground="#4A90E2"))
-        user_entry.bind("<FocusOut>", lambda _: user_frame.config(highlightbackground="#3A4F65"))
+
+        self._history_popup = None
+
+        def _show_history(event=None):
+            history = _load_user_history()
+            if not history:
+                return
+            _hide_history()
+            self.update_idletasks()
+            x = user_frame.winfo_rootx()
+            y = user_frame.winfo_rooty() + user_frame.winfo_height()
+            w = user_frame.winfo_width()
+
+            popup = tk.Toplevel(self)
+            popup.overrideredirect(True)
+            popup.geometry(f"{w}x{min(len(history), 6) * 38}+{x}+{y}")
+            popup.configure(bg="#1E2A3A")
+            popup.attributes("-topmost", True)
+            self._history_popup = popup
+
+            for email in history:
+                row = tk.Frame(popup, bg="#2E3F52", cursor="hand2")
+                row.pack(fill="x")
+                tk.Label(row, text=f"  👤  {email}", bg="#2E3F52", fg="#FFFFFF",
+                         font=("Segoe UI", 10), anchor="w", pady=9
+                         ).pack(fill="x")
+                tk.Frame(popup, bg="#1E2A3A", height=1).pack(fill="x")
+
+                def _select(e=email):
+                    self._user_var.set(e)
+                    _hide_history()
+                    pass_entry.focus_set()
+
+                row.bind("<Button-1>", lambda _, fn=_select: fn())
+                for w_ in row.winfo_children():
+                    w_.bind("<Button-1>", lambda _, fn=_select: fn())
+                row.bind("<Enter>", lambda _, r=row: r.config(bg="#3A5068") or
+                         [c.config(bg="#3A5068") for c in r.winfo_children()])
+                row.bind("<Leave>", lambda _, r=row: r.config(bg="#2E3F52") or
+                         [c.config(bg="#2E3F52") for c in r.winfo_children()])
+
+        def _hide_history(event=None):
+            if self._history_popup:
+                try: self._history_popup.destroy()
+                except: pass
+                self._history_popup = None
+
+        user_entry.bind("<FocusIn>",  lambda e: (user_frame.config(highlightbackground="#4A90E2"), _show_history(e)))
+        user_entry.bind("<FocusOut>", lambda e: (user_frame.config(highlightbackground="#3A4F65"), self.after(150, _hide_history)))
+        user_entry.bind("<Escape>",   lambda _: _hide_history())
 
         # Campo Senha
         tk.Label(body, text="Senha", bg="#1E2A3A", fg="#9AAEC1",
@@ -1899,10 +2888,16 @@ class LoginWindow(tk.Tk):
         btn.bind("<Leave>", lambda _: btn.config(bg="#4A90E2"))
 
         # Rodapé
-        tk.Label(body, text="© 2025 CentralDocs", bg="#1E2A3A", fg="#3A4F65",
+        tk.Label(body, text="© 2025 Zynor Docs", bg="#1E2A3A", fg="#3A4F65",
                  font=("Segoe UI", 8)).pack(side="bottom", pady=(0, 8))
 
-        user_entry.focus_set()
+        # Preenche o último e-mail usado e foca na senha
+        history = _load_user_history()
+        if history:
+            self._user_var.set(history[0])
+            pass_entry.focus_set()
+        else:
+            user_entry.focus_set()
 
     def _login(self):
         email    = self._user_var.get().strip()
@@ -1917,6 +2912,16 @@ class LoginWindow(tk.Tk):
         # Armazena o usuário globalmente
         global CURRENT_USER
         CURRENT_USER = {"id": user["id"], "name": user["name"], "email": user["email"]}
+        try:
+            history = _load_user_history()
+            if email in history:
+                history.remove(email)
+            history.insert(0, email)
+            with open(LAST_USER_FILE, "w", encoding="utf-8") as f:
+                f.write("\n".join(history[:10]))
+        except Exception:
+            pass
+        audit("login")
         self._logged_in = True
         self.destroy()
 

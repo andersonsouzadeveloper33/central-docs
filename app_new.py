@@ -254,24 +254,26 @@ class Api:
         if existing:
             raise Exception(f'Já existe um arquivo chamado "{name}" aqui.')
 
-        storage_path = f"{parent_path}/{name}" if parent_path else f"{TENANT_ID}/{name}"
+        # mesmo cálculo de storage_path do app.py (_make_storage_path)
+        slug = name.lower().replace(" ", "-")
+        base = parent_path.strip("/")
+        storage_path = f"{base}/{slug}" if base else f"{TENANT_ID}/{slug}"
 
-        # cria conteúdo em branco conforme extensão
         import tempfile, boto3
         from botocore.config import Config
         ext = os.path.splitext(name)[1].lower()
         tmp_path = os.path.join(tempfile.gettempdir(), f"zynor_new_{name}")
         try:
-            if ext in (".docx",):
+            if ext == ".docx":
                 from docx import Document
                 Document().save(tmp_path)
-            elif ext in (".xlsx",):
+            elif ext == ".xlsx":
                 import openpyxl
                 openpyxl.Workbook().save(tmp_path)
             else:
-                open(tmp_path, "w").close()
+                with open(tmp_path, "w") as f:
+                    f.write("")
 
-            # upload para R2
             s3 = boto3.client(
                 "s3",
                 endpoint_url=CF_ENDPOINT,
@@ -297,9 +299,11 @@ class Api:
 
     # ── upload de arquivo (base64 → Cloudflare R2 + registro no banco) ──────
     def upload_file(self, filename: str, b64_data: str, parent_path: str):
-        import base64, os as _os
+        import base64
         data = base64.b64decode(b64_data)
-        storage_path = f"{parent_path}/{filename}" if parent_path else filename
+        slug = filename.lower().replace(" ", "-")
+        base = parent_path.strip("/")
+        storage_path = f"{base}/{slug}" if base else f"{TENANT_ID}/{slug}"
 
         # verifica duplicata
         existing = (sb.table("files")
@@ -347,7 +351,6 @@ class Api:
                 config=Config(signature_version="s3v4"),
                 region_name="auto",
             )
-            print(f"[R2] open_file key='{storage_path}' bucket='{CF_BUCKET}'")
             r2_key = storage_path
             ext    = os.path.splitext(filename)[1]
             tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=ext,
@@ -361,9 +364,23 @@ class Api:
 
     # ── excluir pasta ou arquivo ─────────────────────────────────────────────
     def delete_item(self, item_type: str, item_id: str, storage_path: str):
+        import boto3
+        from botocore.config import Config
         try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=CF_ENDPOINT,
+                aws_access_key_id=CF_ACCESS_KEY,
+                aws_secret_access_key=CF_SECRET_KEY,
+                config=Config(signature_version="s3v4"),
+                region_name="auto",
+            )
+
+            def _r2_delete(key: str):
+                try: s3.delete_object(Bucket=CF_BUCKET, Key=key)
+                except: pass
+
             if item_type == "folder":
-                # remove subpastas e arquivos recursivamente
                 all_folders = (sb.table("folders")
                                  .select("id, storage_path")
                                  .eq("tenant_id", TENANT_ID)
@@ -375,12 +392,14 @@ class Api:
                 prefix = storage_path.rstrip("/") + "/"
                 for f in all_files:
                     if f["storage_path"].startswith(prefix) or f["storage_path"] == storage_path:
+                        _r2_delete(f["storage_path"])
                         sb.table("files").delete().eq("id", f["id"]).execute()
                 for f in all_folders:
                     if f["storage_path"].startswith(prefix):
                         sb.table("folders").delete().eq("id", f["id"]).execute()
                 sb.table("folders").delete().eq("id", item_id).execute()
             else:
+                _r2_delete(storage_path)
                 sb.table("files").delete().eq("id", item_id).execute()
             return {"ok": True}
         except Exception as e:

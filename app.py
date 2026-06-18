@@ -1161,104 +1161,102 @@ class App(tk.Tk):
     # ══════════════════════════════════════════════════════════════════════════
     def _build_ui(self):
         # ── Barra de título customizada ───────────────────────────────────────
-        titlebar = tk.Frame(self, bg="#141F2D", height=36)
+        titlebar = ctk.CTkFrame(self, fg_color="#141F2D", corner_radius=0, height=36)
         titlebar.pack(fill="x", side="top")
         titlebar.pack_propagate(False)
 
-        # Ícone + nome do app
-        tk.Label(titlebar, text="  ◈  Zynor Docs", bg="#141F2D", fg="#FFFFFF",
-                 font=("Segoe UI", 10, "bold")).pack(side="left", padx=8)
+        ctk.CTkLabel(titlebar, text="  ◈  Zynor Docs",
+                     font=ctk.CTkFont("Segoe UI", 11, weight="bold"),
+                     text_color="#FFFFFF").pack(side="left", padx=8)
 
-        # Botões de controle (direita)
-        btn_cfg = dict(bg="#141F2D", font=("Segoe UI", 11), relief="flat",
-                       cursor="hand2", bd=0, padx=14, pady=4)
+        for txt, cmd, hover in [
+            ("✕", self._on_close,       "#E53935"),
+            ("□", self._toggle_maximize, "#2E3F52"),
+            ("─", self._minimize,        "#2E3F52"),
+        ]:
+            b = ctk.CTkButton(titlebar, text=txt, width=40, height=36,
+                              fg_color="transparent", text_color="#9AAEC1",
+                              hover_color=hover, corner_radius=0,
+                              font=ctk.CTkFont("Segoe UI", 12), command=cmd)
+            b.pack(side="right")
+        self._btn_max = titlebar.winfo_children()[-2]  # botão □
 
-        btn_close = tk.Button(titlebar, text="✕", fg="#9AAEC1",
-                              activebackground="#E53935", activeforeground="#FFFFFF",
-                              command=self._on_close, **btn_cfg)
-        btn_close.pack(side="right")
-        btn_close.bind("<Enter>", lambda _: btn_close.config(bg="#E53935", fg="#FFFFFF"))
-        btn_close.bind("<Leave>", lambda _: btn_close.config(bg="#141F2D", fg="#9AAEC1"))
-
-        self._btn_max = tk.Button(titlebar, text="□", fg="#9AAEC1",
-                                  activebackground="#2E3F52", activeforeground="#FFFFFF",
-                                  command=self._toggle_maximize, **btn_cfg)
-        self._btn_max.pack(side="right")
-        self._btn_max.bind("<Enter>", lambda _: self._btn_max.config(bg="#2E3F52", fg="#FFFFFF"))
-        self._btn_max.bind("<Leave>", lambda _: self._btn_max.config(bg="#141F2D", fg="#9AAEC1"))
-
-        btn_min = tk.Button(titlebar, text="─", fg="#9AAEC1",
-                            activebackground="#2E3F52", activeforeground="#FFFFFF",
-                            command=self._minimize, **btn_cfg)
-        btn_min.pack(side="right")
-        btn_min.bind("<Enter>", lambda _: btn_min.config(bg="#2E3F52", fg="#FFFFFF"))
-        btn_min.bind("<Leave>", lambda _: btn_min.config(bg="#141F2D", fg="#9AAEC1"))
-
-        # Arrastar janela pelo titlebar
-        titlebar.bind("<Button-1>",   self._start_drag)
-        titlebar.bind("<B1-Motion>",  self._do_drag)
-        titlebar.bind("<Double-1>",   lambda _: self._toggle_maximize())
+        titlebar.bind("<Button-1>",  self._start_drag)
+        titlebar.bind("<B1-Motion>", self._do_drag)
+        titlebar.bind("<Double-1>",  lambda _: self._toggle_maximize())
 
         # ── Corpo (sidebar + main) ─────────────────────────────────────────────
-        body = tk.Frame(self, bg="#F5F6FA")
+        body = ctk.CTkFrame(self, fg_color="#F0F2F5", corner_radius=0)
         body.pack(fill="both", expand=True)
 
         # ── Sidebar ───────────────────────────────────────────────────────────
-        self._sidebar = tk.Frame(body, bg="#1E2A3A", width=240)
+        self._sidebar = ctk.CTkFrame(body, fg_color="#1A2332", corner_radius=0, width=240)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
 
-        tk.Label(self._sidebar, text="Zynor Docs", bg="#1E2A3A", fg="#FFFFFF",
-                 font=("Segoe UI", 16, "bold"), pady=24).pack(fill="x", padx=20)
-        tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=4)
+        ctk.CTkLabel(self._sidebar, text="Zynor Docs",
+                     font=ctk.CTkFont("Segoe UI", 16, weight="bold"),
+                     text_color="#FFFFFF").pack(fill="x", padx=20, pady=(24, 4))
+        ctk.CTkFrame(self._sidebar, fg_color="#2E3F52", height=1,
+                     corner_radius=0).pack(fill="x", padx=16, pady=4)
 
         nav_items = [
             ("  📄  Documentos",    "documentos"),
             ("  📊  Relatórios",    "relatorios"),
             ("  ⚙️  Configurações", "config"),
         ]
-        self._nav_labels = {}
+        self._nav_btns = {}
         for label, key in nav_items:
-            lbl = tk.Label(self._sidebar, text=label,
-                           bg="#1E2A3A", fg="#9AAEC1",
-                           font=("Segoe UI", 11), anchor="w",
-                           cursor="hand2", pady=10, padx=16)
-            lbl.pack(fill="x", pady=2)
-            lbl.bind("<Button-1>", lambda _, k=key: self._nav_go(k))
-            self._nav_labels[key] = lbl
+            btn = ctk.CTkButton(self._sidebar, text=label, anchor="w",
+                                fg_color="transparent", text_color="#9AAEC1",
+                                hover_color="#263549", corner_radius=6, height=40,
+                                font=ctk.CTkFont("Segoe UI", 12),
+                                command=lambda k=key: self._nav_go(k))
+            btn.pack(fill="x", padx=10, pady=1)
+            self._nav_btns[key] = btn
+        # manter compatibilidade com código que usa _nav_labels
+        self._nav_labels = self._nav_btns
 
-        tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=(16, 4))
+        ctk.CTkFrame(self._sidebar, fg_color="#2E3F52", height=1,
+                     corner_radius=0).pack(fill="x", padx=16, pady=(16, 4))
 
-        folders_header = tk.Frame(self._sidebar, bg="#1E2A3A")
+        folders_header = ctk.CTkFrame(self._sidebar, fg_color="transparent")
         folders_header.pack(fill="x", padx=16, pady=(4, 4))
-        tk.Label(folders_header, text="MINHAS PASTAS", bg="#1E2A3A", fg="#6B8099",
-                 font=("Segoe UI", 8, "bold")).pack(side="left")
-        add_lbl = tk.Label(folders_header, text="＋", bg="#1E2A3A", fg="#9AAEC1",
-                           font=("Segoe UI", 13), cursor="hand2")
-        add_lbl.pack(side="right")
-        add_lbl.bind("<Button-1>", lambda _: self._open_new_folder_dialog())
+        ctk.CTkLabel(folders_header, text="MINHAS PASTAS",
+                     font=ctk.CTkFont("Segoe UI", 9, weight="bold"),
+                     text_color="#6B8099").pack(side="left")
+        add_btn = ctk.CTkButton(folders_header, text="＋", width=28, height=24,
+                                fg_color="transparent", text_color="#9AAEC1",
+                                hover_color="#263549", corner_radius=4,
+                                font=ctk.CTkFont("Segoe UI", 14),
+                                command=self._open_new_folder_dialog)
+        add_btn.pack(side="right")
 
-        self._folders_list = tk.Frame(self._sidebar, bg="#1E2A3A")
+        self._folders_list = ctk.CTkFrame(self._sidebar, fg_color="transparent")
         self._folders_list.pack(fill="x")
 
         # ── Main ──────────────────────────────────────────────────────────────
-        main = tk.Frame(body, bg="#F5F6FA")
+        main = ctk.CTkFrame(body, fg_color="#F0F2F5", corner_radius=0)
         main.pack(side="left", fill="both", expand=True)
 
         # Topbar
-        topbar = tk.Frame(main, bg="#FFFFFF", height=56)
+        topbar = ctk.CTkFrame(main, fg_color="#FFFFFF", corner_radius=0, height=56)
         topbar.pack(fill="x")
         topbar.pack_propagate(False)
-        self._topbar_title = tk.Label(topbar, text="Documentos", bg="#FFFFFF", fg="#1E2A3A",
-                                      font=("Segoe UI", 14, "bold"))
-        self._topbar_title.pack(side="left", padx=24, pady=14)
+        self._topbar_title = ctk.CTkLabel(topbar, text="Documentos",
+                                          font=ctk.CTkFont("Segoe UI", 15, weight="bold"),
+                                          text_color="#1E2A3A")
+        self._topbar_title.pack(side="left", padx=24)
+
         user_name = CURRENT_USER.get("name", "Usuário")
-        user_frame = tk.Frame(topbar, bg="#FFFFFF", cursor="hand2")
+        user_frame = ctk.CTkFrame(topbar, fg_color="transparent", cursor="hand2")
         user_frame.pack(side="right", padx=24)
-        tk.Label(user_frame, text="👤", bg="#FFFFFF", fg="#4A90E2",
-                 font=("Segoe UI", 11)).pack(side="left")
-        user_lbl = tk.Label(user_frame, text=f"  {user_name}  ▾", bg="#FFFFFF", fg="#1E2A3A",
-                            font=("Segoe UI", 10))
+        ctk.CTkLabel(user_frame, text="👤",
+                     font=ctk.CTkFont("Segoe UI", 12),
+                     text_color="#4A90E2").pack(side="left")
+        user_lbl = ctk.CTkLabel(user_frame, text=f"  {user_name}  ▾",
+                                font=ctk.CTkFont("Segoe UI", 11),
+                                text_color="#1E2A3A")
         user_lbl.pack(side="left")
 
         def _show_user_menu(e):
@@ -1272,49 +1270,58 @@ class App(tk.Tk):
             w.bind("<Button-1>", _show_user_menu)
 
         # Container de páginas
-        self._pages_container = tk.Frame(main, bg="#F5F6FA")
+        self._pages_container = ctk.CTkFrame(main, fg_color="#F0F2F5", corner_radius=0)
         self._pages_container.pack(fill="both", expand=True)
 
         # ── Página: Configurações ─────────────────────────────────────────────
-        self._page_config = tk.Frame(self._pages_container, bg="#F5F6FA")
+        self._page_config = ctk.CTkFrame(self._pages_container, fg_color="#F0F2F5",
+                                         corner_radius=0)
 
         # ── Página: Relatórios ────────────────────────────────────────────────
-        self._page_relatorios = tk.Frame(self._pages_container, bg="#F5F6FA")
+        self._page_relatorios = ctk.CTkFrame(self._pages_container, fg_color="#F0F2F5",
+                                              corner_radius=0)
 
         # ── Página: Documentos ────────────────────────────────────────────────
-        self._page_documentos = tk.Frame(self._pages_container, bg="#F5F6FA")
+        self._page_documentos = ctk.CTkFrame(self._pages_container, fg_color="#F0F2F5",
+                                              corner_radius=0)
         content = self._page_documentos
-        content.pack(fill="both", expand=True, padx=28, pady=20)
-
+        content.pack(fill="both", expand=True, padx=24, pady=16)
 
         # Breadcrumb
-        self._breadcrumb_frame = tk.Frame(content, bg="#F5F6FA")
+        self._breadcrumb_frame = ctk.CTkFrame(content, fg_color="transparent",
+                                               corner_radius=0)
         self._breadcrumb_frame.pack(fill="x", pady=(0, 8))
 
         # Search bar
-        search_frame = tk.Frame(content, bg="#FFFFFF", highlightthickness=1,
-                                highlightbackground="#D0D7E2")
+        search_frame = ctk.CTkFrame(content, fg_color="#FFFFFF", corner_radius=8,
+                                     border_width=1, border_color="#D0D7E2")
         search_frame.pack(fill="x", pady=(0, 10))
 
-        tk.Label(search_frame, text="🔍", bg="#FFFFFF", font=("Segoe UI", 11),
-                 padx=8).pack(side="left")
+        ctk.CTkLabel(search_frame, text="🔍",
+                     font=ctk.CTkFont("Segoe UI", 12),
+                     text_color="#9AAEC1").pack(side="left", padx=(12, 4))
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", self._on_search_change)
-        tk.Entry(search_frame, textvariable=self._search_var, bg="#FFFFFF", fg="#1E2A3A",
-                 relief="flat", font=("Segoe UI", 11),
-                 insertbackground="#1E2A3A").pack(side="left", fill="x", expand=True, ipady=7)
-        clr = tk.Label(search_frame, text="✕", bg="#FFFFFF", fg="#9AAEC1",
-                       font=("Segoe UI", 11), cursor="hand2", padx=10)
-        clr.pack(side="right")
-        clr.bind("<Button-1>", lambda _: self._search_var.set(""))
+        ctk.CTkEntry(search_frame, textvariable=self._search_var,
+                     placeholder_text="Buscar arquivos e pastas...",
+                     fg_color="transparent", border_width=0,
+                     text_color="#1E2A3A", height=38,
+                     font=ctk.CTkFont("Segoe UI", 12)).pack(
+                     side="left", fill="x", expand=True, padx=(0, 8))
+        clr_btn = ctk.CTkButton(search_frame, text="✕", width=32, height=32,
+                                fg_color="transparent", text_color="#9AAEC1",
+                                hover_color="#F0F2F5", corner_radius=6,
+                                font=ctk.CTkFont("Segoe UI", 11),
+                                command=lambda: self._search_var.set(""))
+        clr_btn.pack(side="right", padx=4)
 
         self._result_var = tk.StringVar(value="")
-        tk.Label(content, textvariable=self._result_var, bg="#F5F6FA",
-                 fg="#6B7A90", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 4))
-
+        ctk.CTkLabel(content, textvariable=self._result_var,
+                     font=ctk.CTkFont("Segoe UI", 9),
+                     text_color="#6B7A90").pack(anchor="w", pady=(0, 4))
 
         # Área de cards com scroll
-        wrapper = tk.Frame(content, bg="#F5F6FA")
+        wrapper = ctk.CTkFrame(content, fg_color="#F0F2F5", corner_radius=0)
         wrapper.pack(fill="both", expand=True)
 
         style = ttk.Style()
@@ -1390,18 +1397,18 @@ class App(tk.Tk):
             "config":     "Configurações",
         }
         # Atualiza destaque na sidebar
-        for k, lbl in self._nav_labels.items():
-            lbl.config(bg="#2E3F52" if k == key else "#1E2A3A",
-                       fg="#FFFFFF" if k == key else "#9AAEC1")
+        for k, btn in self._nav_btns.items():
+            btn.configure(fg_color="#263549" if k == key else "transparent",
+                          text_color="#FFFFFF" if k == key else "#9AAEC1")
 
-        self._topbar_title.config(text=titles.get(key, key.capitalize()))
+        self._topbar_title.configure(text=titles.get(key, key.capitalize()))
 
         # Esconde todas as páginas
         for frame in self._pages_container.winfo_children():
             frame.pack_forget()
 
         if key == "documentos":
-            self._page_documentos.pack(fill="both", expand=True, padx=28, pady=20)
+            self._page_documentos.pack(fill="both", expand=True)
             if show_home:
                 self._show_home()
         elif key == "relatorios":
@@ -1454,9 +1461,9 @@ class App(tk.Tk):
     def _clear_breadcrumb(self):
         for w in self._breadcrumb_frame.winfo_children():
             w.destroy()
-        # Mostra só o link "Início"
-        tk.Label(self._breadcrumb_frame, text="Início", bg="#F5F6FA",
-                 fg="#1E2A3A", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ctk.CTkLabel(self._breadcrumb_frame, text="Início",
+                     font=ctk.CTkFont("Segoe UI", 11, weight="bold"),
+                     text_color="#1E2A3A").pack(side="left")
 
     def _make_add_card(self, parent, icon: str, label: str, color: str, cmd):
         card = tk.Frame(parent, bg="#FFFFFF", cursor="hand2",
@@ -2492,15 +2499,13 @@ class App(tk.Tk):
                 self._show_home()
 
     def _add_folder_to_sidebar(self, folder: dict):
-        row = tk.Frame(self._folders_list, bg="#1E2A3A", cursor="hand2")
-        row.pack(fill="x")
-        lbl = tk.Label(row, text=f"  📁  {folder['name']}", bg="#1E2A3A", fg="#C5D5E8",
-                       font=("Segoe UI", 10), anchor="w", cursor="hand2", pady=7, padx=8)
-        lbl.pack(fill="x")
-        for w in (row, lbl):
-            w.bind("<Button-1>", lambda _, p=folder["storage_path"]: self._select_root(p))
-            w.bind("<Enter>",    lambda _, ww=lbl: ww.config(bg="#2E3F52"))
-            w.bind("<Leave>",    lambda _, ww=lbl: ww.config(bg="#1E2A3A"))
+        btn = ctk.CTkButton(self._folders_list,
+                            text=f"  📁  {folder['name']}", anchor="w",
+                            fg_color="transparent", text_color="#C5D5E8",
+                            hover_color="#263549", corner_radius=6, height=36,
+                            font=ctk.CTkFont("Segoe UI", 11),
+                            command=lambda p=folder["storage_path"]: self._select_root(p))
+        btn.pack(fill="x", padx=10, pady=1)
 
     def _select_root(self, storage_path: str):
         self._root_path = storage_path

@@ -35,11 +35,72 @@ CF_SECRET_KEY = "17f05bbe4c37afe9dfbb368fce4cf74af7e219ea65c5183607b6f241015e665
 CF_BUCKET     = "centraldocs"
 CF_ENDPOINT   = f"https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
+import boto3
+from botocore.config import Config as _BotoConfig
+
+def _r2():
+    return boto3.client(
+        "s3",
+        endpoint_url=CF_ENDPOINT,
+        aws_access_key_id=CF_ACCESS_KEY,
+        aws_secret_access_key=CF_SECRET_KEY,
+        config=_BotoConfig(signature_version="s3v4"),
+        region_name="auto",
+    )
+
 # ── Utilitários ──────────────────────────────────────────────────────────────
 def _ui_dir() -> str:
     if getattr(sys, "frozen", False):
         return os.path.join(sys._MEIPASS, "ui")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+
+def _local_storage() -> str:
+    path = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def _local_path(storage_path: str) -> str:
+    return os.path.join(_local_storage(), storage_path.lstrip("/").replace("/", os.sep))
+
+def _storage_upload(storage_path: str, local_path: str):
+    """Copia para pasta local e tenta R2 (falha silenciosa se offline)."""
+    import shutil
+    dest = _local_path(storage_path)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy2(local_path, dest)
+    try:
+        _r2().upload_file(local_path, CF_BUCKET, storage_path)
+    except Exception as e:
+        print(f"[R2] upload falhou (offline?): {e}")
+
+def _storage_download(storage_path: str) -> str:
+    """Baixa do R2 se necessário; usa cópia local como fallback."""
+    dest = _local_path(storage_path)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    try:
+        meta = _r2().head_object(Bucket=CF_BUCKET, Key=storage_path)
+        r2_mtime = meta["LastModified"].timestamp()
+        if not os.path.exists(dest) or r2_mtime > os.path.getmtime(dest) + 5:
+            try:
+                _r2().download_file(CF_BUCKET, storage_path, dest)
+            except PermissionError:
+                pass
+    except Exception as e:
+        print(f"[R2] download falhou (offline?): {e}")
+        if not os.path.exists(dest):
+            return ""
+    return dest
+
+def _storage_delete(storage_path: str):
+    """Remove arquivo local e do R2."""
+    local = _local_path(storage_path)
+    if os.path.exists(local):
+        try: os.remove(local)
+        except: pass
+    try:
+        _r2().delete_object(Bucket=CF_BUCKET, Key=storage_path)
+    except Exception as e:
+        print(f"[R2] delete falhou: {e}")
 
 def _fmt_size(b) -> str:
     if b is None: return "—"
@@ -259,8 +320,7 @@ class Api:
         base = parent_path.strip("/")
         storage_path = f"{base}/{slug}" if base else f"{TENANT_ID}/{slug}"
 
-        import tempfile, boto3
-        from botocore.config import Config
+        import tempfile
         ext = os.path.splitext(name)[1].lower()
         tmp_path = os.path.join(tempfile.gettempdir(), f"zynor_new_{name}")
         try:
@@ -274,16 +334,8 @@ class Api:
                 with open(tmp_path, "w") as f:
                     f.write("")
 
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=CF_ENDPOINT,
-                aws_access_key_id=CF_ACCESS_KEY,
-                aws_secret_access_key=CF_SECRET_KEY,
-                config=Config(signature_version="s3v4"),
-                region_name="auto",
-            )
-            s3.upload_file(tmp_path, CF_BUCKET, storage_path)
             file_size = os.path.getsize(tmp_path)
+            _storage_upload(storage_path, tmp_path)
         finally:
             try: os.remove(tmp_path)
             except: pass
@@ -315,18 +367,16 @@ class Api:
         if existing:
             raise Exception(f'"{filename}" já existe nesta pasta.')
 
-        # envia ao R2
-        import boto3
-        from botocore.config import Config
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=CF_ENDPOINT,
-            aws_access_key_id=CF_ACCESS_KEY,
-            aws_secret_access_key=CF_SECRET_KEY,
-            config=Config(signature_version="s3v4"),
-            region_name="auto",
-        )
-        s3.put_object(Bucket=CF_BUCKET, Key=storage_path, Body=data)
+        # salva temp e faz upload via _storage_upload (funciona offline)
+        import tempfile
+        tmp_path = os.path.join(tempfile.gettempdir(), f"zynor_up_{filename}")
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(data)
+            _storage_upload(storage_path, tmp_path)
+        finally:
+            try: os.remove(tmp_path)
+            except: pass
 
         # registra no banco
         sb.table("files").insert({
@@ -338,48 +388,20 @@ class Api:
         }).execute()
         return {"ok": True}
 
-    # ── abrir arquivo (baixa do R2 e abre com programa padrão) ─────────────
+    # ── abrir arquivo (usa cópia local ou baixa do R2) ──────────────────────
     def open_file(self, storage_path: str, filename: str):
-        import boto3, tempfile
-        from botocore.config import Config
         try:
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=CF_ENDPOINT,
-                aws_access_key_id=CF_ACCESS_KEY,
-                aws_secret_access_key=CF_SECRET_KEY,
-                config=Config(signature_version="s3v4"),
-                region_name="auto",
-            )
-            r2_key = storage_path
-            ext    = os.path.splitext(filename)[1]
-            tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=ext,
-                                                 prefix="zynor_", dir=tempfile.gettempdir())
-            s3.download_fileobj(CF_BUCKET, r2_key, tmp)
-            tmp.close()
-            os.startfile(tmp.name)
+            local = _storage_download(storage_path)
+            if not local:
+                return {"ok": False, "error": "Arquivo não encontrado localmente nem no storage."}
+            os.startfile(local)
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
     # ── excluir pasta ou arquivo ─────────────────────────────────────────────
     def delete_item(self, item_type: str, item_id: str, storage_path: str):
-        import boto3
-        from botocore.config import Config
         try:
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=CF_ENDPOINT,
-                aws_access_key_id=CF_ACCESS_KEY,
-                aws_secret_access_key=CF_SECRET_KEY,
-                config=Config(signature_version="s3v4"),
-                region_name="auto",
-            )
-
-            def _r2_delete(key: str):
-                try: s3.delete_object(Bucket=CF_BUCKET, Key=key)
-                except: pass
-
             if item_type == "folder":
                 all_folders = (sb.table("folders")
                                  .select("id, storage_path")
@@ -392,14 +414,14 @@ class Api:
                 prefix = storage_path.rstrip("/") + "/"
                 for f in all_files:
                     if f["storage_path"].startswith(prefix) or f["storage_path"] == storage_path:
-                        _r2_delete(f["storage_path"])
+                        _storage_delete(f["storage_path"])
                         sb.table("files").delete().eq("id", f["id"]).execute()
                 for f in all_folders:
                     if f["storage_path"].startswith(prefix):
                         sb.table("folders").delete().eq("id", f["id"]).execute()
                 sb.table("folders").delete().eq("id", item_id).execute()
             else:
-                _r2_delete(storage_path)
+                _storage_delete(storage_path)
                 sb.table("files").delete().eq("id", item_id).execute()
             return {"ok": True}
         except Exception as e:

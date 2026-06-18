@@ -23,6 +23,7 @@ async function init() {
   const session = await api().get_session();
   if (session.tenant_id && session.user?.id) {
     showApp();
+    showHomeView();
     await loadSession();
     await loadSidebar();
   } else {
@@ -37,9 +38,22 @@ function showLogin() {
 }
 
 function showApp() {
-  document.getElementById("loginScreen").style.display  = "none";
+  document.getElementById("loginScreen").style.display    = "none";
   document.getElementById("changePwScreen").style.display = "none";
-  document.getElementById("appShell").style.display     = "flex";
+  document.getElementById("appShell").style.display       = "flex";
+}
+
+function showHomeView() {
+  document.getElementById("homeView").style.display   = "";
+  document.getElementById("folderView").style.display = "none";
+  state.currentPath = null;
+  state.breadcrumb  = [];
+  document.getElementById("breadcrumb").innerHTML = "<strong>Início</strong>";
+}
+
+function showFolderView() {
+  document.getElementById("homeView").style.display   = "none";
+  document.getElementById("folderView").style.display = "flex";
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -64,6 +78,7 @@ function initLogin() {
         return;
       }
       showApp();
+      showHomeView();
       await loadSession();
       await loadSidebar();
     } catch(e) {
@@ -100,6 +115,7 @@ function initChangePw() {
       const res = await api().change_password(p1);
       if (!res.ok) { errEl.textContent = res.error || "Erro ao salvar."; return; }
       showApp();
+      showHomeView();
       await loadSession();
       await loadSidebar();
     } catch(e) {
@@ -118,6 +134,10 @@ async function loadSession() {
     const initials = s.user.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
     document.querySelectorAll(".user-avatar").forEach(el => el.textContent = initials);
     document.querySelectorAll(".user-name").forEach(el => el.textContent = s.user.name);
+    const at = document.getElementById("userAvatarTop");
+    const nt = document.getElementById("userNameTop");
+    if (at) at.textContent = initials;
+    if (nt) nt.textContent = s.user.name;
   } catch(e) { console.warn("sem sessão:", e); }
 }
 
@@ -133,10 +153,43 @@ async function loadSidebar() {
       return;
     }
     folders.forEach(f => tree.appendChild(buildTreeNode(f, 0)));
+    await loadHomeGrid(folders);
   } catch(e) {
     tree.innerHTML = `<div class="tree-empty">Erro ao carregar</div>`;
     console.error(e);
   }
+}
+
+async function loadHomeGrid(folders) {
+  const grid = document.getElementById("homeGrid");
+  grid.innerHTML = "";
+  folders.forEach(f => {
+    const card = document.createElement("div");
+    card.className = "home-folder-card";
+    card.innerHTML = `
+      <svg viewBox="0 0 24 24">
+        <path d="M3 7C3 5.9 3.9 5 5 5h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"
+              fill="#bfdbfe" stroke="#3b82f6" stroke-width=".6"/>
+        <path d="M3 10h18" stroke="#93c5fd" stroke-width=".8"/>
+      </svg>
+      <span class="home-folder-label">${f.name}</span>`;
+    card.addEventListener("click", () => {
+      showFolderView();
+      const node = document.querySelector(`.tree-node[data-path="${f.storage_path}"]`);
+      selectNode(node || makeVirtualNode(f.storage_path), f);
+      if (node && !state.expanded.has(f.storage_path)) toggleNode(node, f, 0);
+    });
+    grid.appendChild(card);
+  });
+}
+
+function makeVirtualNode(path) {
+  const n = document.createElement("div");
+  n.dataset.path = path;
+  const r = document.createElement("div");
+  r.className = "tree-row";
+  n.appendChild(r);
+  return n;
 }
 
 function buildTreeNode(folder, depth) {
@@ -220,9 +273,11 @@ async function toggleNode(wrap, folder, depth) {
 }
 
 async function selectNode(wrap, folder) {
-  // remove seleção anterior
+  showFolderView();
+
   document.querySelectorAll(".tree-row.active").forEach(r => r.classList.remove("active"));
-  wrap.querySelector(".tree-row").classList.add("active");
+  const row = wrap.querySelector(".tree-row");
+  if (row) row.classList.add("active");
 
   const crumbs = buildCrumbs(folder.storage_path, folder.name);
   state.currentPath = folder.storage_path;
@@ -247,29 +302,32 @@ function buildCrumbs(storagePath, name) {
 
 // ── Breadcrumb ───────────────────────────────────────────────────────────────
 function updateBreadcrumb() {
-  const bc     = document.querySelector(".breadcrumb");
+  const bc     = document.getElementById("breadcrumb");
   const crumbs = [{ name: "Início", path: null }, ...state.breadcrumb];
-  bc.innerHTML  = crumbs.map((c, i) => {
+  bc.innerHTML = crumbs.map((c, i) => {
     const isLast = i === crumbs.length - 1;
     if (isLast) return `<strong>${c.name}</strong>`;
     return `<a href="#" data-path="${c.path ?? ""}" data-name="${c.name}">${c.name}</a><span class="sep">›</span>`;
   }).join("");
 
-  bc.querySelectorAll("a[data-path]").forEach(a => {
+  bc.querySelectorAll("a").forEach(a => {
     a.addEventListener("click", e => {
       e.preventDefault();
-      // navega de volta — seleciona o nó da sidebar se existir
-      const node = document.querySelector(`.tree-node[data-path="${a.dataset.path}"]`);
-      if (node) {
-        const folder = { storage_path: a.dataset.path, name: a.dataset.name };
-        selectNode(node, folder);
+      if (a.dataset.path === "") {
+        // voltar para home
+        showHomeView();
+        document.querySelectorAll(".tree-row.active").forEach(r => r.classList.remove("active"));
+        return;
       }
+      const node = document.querySelector(`.tree-node[data-path="${a.dataset.path}"]`);
+      const folder = { storage_path: a.dataset.path, name: a.dataset.name };
+      selectNode(node || makeVirtualNode(a.dataset.path), folder);
     });
   });
 }
 
 function updateFolderTitle(name) {
-  const h1 = document.querySelector(".folder-name");
+  const h1 = document.getElementById("folderName");
   if (h1) h1.textContent = name;
 }
 
@@ -336,14 +394,22 @@ async function loadGrid(path) {
 async function loadStats(path) {
   try {
     const s = await api().get_folder_stats(path);
-    setStatVal(0, s.file_count   ?? "—");
-    setStatVal(1, s.folder_count ?? "—");
-    setStatVal(2, s.total_size   ?? "—");
+    const fc = s.file_count   ?? "—";
+    const fo = s.folder_count ?? "—";
+    const sz = s.total_size   ?? "—";
+    // stats cards
+    const cards = document.querySelectorAll(".stat-value");
+    if (cards[0]) cards[0].textContent = fc;
+    if (cards[1]) cards[1].textContent = fo;
+    if (cards[2]) cards[2].textContent = sz;
+    // folder meta (topbar)
+    const mf = document.getElementById("metaFiles");
+    const mfo = document.getElementById("metaFolders");
+    const ms = document.getElementById("metaSize");
+    if (mf)  mf.textContent  = `${fc} arquivo(s)`;
+    if (mfo) mfo.textContent = `${fo} pasta(s)`;
+    if (ms)  ms.textContent  = sz;
   } catch(e) { /* silencioso */ }
-}
-function setStatVal(idx, val) {
-  const cards = document.querySelectorAll(".stat-value");
-  if (cards[idx]) cards[idx].textContent = val;
 }
 
 // ── Painel de detalhes ────────────────────────────────────────────────────────

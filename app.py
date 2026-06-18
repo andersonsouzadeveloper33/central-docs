@@ -767,6 +767,106 @@ def file_get_lock_info(file_id: str) -> dict | None:
     return None
 
 
+# ── Modal: Upload com progresso ───────────────────────────────────────────────
+class UploadProgressDialog(tk.Toplevel):
+    """Spinner + barra de progresso para upload de múltiplos arquivos em thread."""
+
+    _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, parent, files: list, current_path: str, on_done):
+        self._overlay = _make_dialog_overlay(parent)
+        super().__init__(parent)
+        self.resizable(False, False)
+        self.configure(bg="#F5F6FA", highlightthickness=1, highlightbackground="#D0D7E2")
+        self.overrideredirect(True)
+        self.grab_set()
+        self.lift()
+
+        self._files        = files
+        self._current_path = current_path
+        self._on_done      = on_done
+        self._skipped      = []
+        self._spinner_idx  = 0
+        self._done         = False
+
+        pw = parent.winfo_rootx() + parent.winfo_width() // 2
+        ph = parent.winfo_rooty() + parent.winfo_height() // 2
+        self.geometry(f"420x220+{pw - 210}+{ph - 110}")
+        self._build()
+        self.after(100, self._start)
+
+    def _build(self):
+        _make_dialog_header(self, "Enviando arquivos...", lambda: None)
+        body = tk.Frame(self, bg="#F5F6FA")
+        body.pack(fill="both", expand=True, padx=28, pady=20)
+
+        top = tk.Frame(body, bg="#F5F6FA")
+        top.pack(fill="x")
+        self._spinner_lbl = tk.Label(top, text="⠋", bg="#F5F6FA", fg="#4A90E2",
+                                     font=("Segoe UI", 20))
+        self._spinner_lbl.pack(side="left")
+        self._file_lbl = tk.Label(top, text="Preparando...", bg="#F5F6FA", fg="#1E2A3A",
+                                  font=("Segoe UI", 11), anchor="w")
+        self._file_lbl.pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+        self._progress = ttk.Progressbar(body, mode="determinate",
+                                         maximum=max(len(self._files), 1))
+        self._progress.pack(fill="x", pady=(14, 6))
+
+        self._count_lbl = tk.Label(body, text=f"0 / {len(self._files)}",
+                                   bg="#F5F6FA", fg="#6B7A90", font=("Segoe UI", 10))
+        self._count_lbl.pack(anchor="e")
+
+    def _tick_spinner(self):
+        if self._done:
+            return
+        self._spinner_idx = (self._spinner_idx + 1) % len(self._SPINNER)
+        self._spinner_lbl.config(text=self._SPINNER[self._spinner_idx])
+        self.after(80, self._tick_spinner)
+
+    def _start(self):
+        self._tick_spinner()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        existentes = [r["name"].lower() for r in db_list_children(self._current_path)]
+        total = len(self._files)
+        for i, local_path in enumerate(self._files):
+            filename = os.path.basename(local_path)
+            self.after(0, self._update_ui, filename, i, total)
+            if filename.lower() in existentes:
+                self._skipped.append(filename)
+            else:
+                rec = db_create_file(filename, parent_path=self._current_path)
+                storage_upload(rec["storage_path"], local_path)
+                audit("criou", "arquivo", filename)
+                existentes.append(filename.lower())
+        self.after(0, self._finish)
+
+    def _update_ui(self, filename, idx, total):
+        self._file_lbl.config(text=filename)
+        self._progress["value"] = idx
+        self._count_lbl.config(text=f"{idx} / {total}")
+
+    def _finish(self):
+        self._done = True
+        self._spinner_lbl.config(text="✓", fg="#27AE60")
+        self._file_lbl.config(text="Concluído!")
+        self._progress["value"] = len(self._files)
+        self._count_lbl.config(text=f"{len(self._files)} / {len(self._files)}")
+        self.after(800, self._close)
+
+    def _close(self):
+        skipped = self._skipped[:]
+        self.destroy()
+        self._on_done(skipped)
+
+    def destroy(self):
+        try: self._overlay.destroy()
+        except: pass
+        super().destroy()
+
+
 # ── Modal: Adicionar Arquivo ──────────────────────────────────────────────────
 class AddFileDialog(tk.Toplevel):
     """Dialog com 3 opções: Novo Word, Novo Excel, Subir arquivo existente."""
@@ -1335,21 +1435,20 @@ class App(tk.Tk):
         COLS = self._calc_cols()
         perms = get_current_user_permissions()
 
-        entries = []
+        # Linha de ações separada
         if perms.get("can_create") or perms.get("is_admin"):
-            entries.append(("add", None))
-        entries += [("folder", f) for f in folders]
+            action_row = tk.Frame(self._cards_frame, bg="#F5F6FA")
+            action_row.pack(fill="x", pady=(4, 0))
+            self._make_add_card(action_row, "📁", "Nova Pasta", "#4A90E2",
+                                self._open_new_folder_dialog)
+            tk.Frame(self._cards_frame, bg="#E0E6EF", height=1).pack(fill="x", padx=6, pady=(8, 4))
 
         row_frame = None
-        for i, (kind, data) in enumerate(entries):
+        for i, folder in enumerate(folders):
             if i % COLS == 0:
                 row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
                 row_frame.pack(fill="x", pady=4)
-            if kind == "add":
-                self._make_add_card(row_frame, "📁", "Nova Pasta", "#4A90E2",
-                                    self._open_new_folder_dialog)
-            else:
-                self._make_home_folder_card(row_frame, data)
+            self._make_home_folder_card(row_frame, folder)
 
 
     def _clear_breadcrumb(self):
@@ -2218,24 +2317,28 @@ class App(tk.Tk):
         entries = db_list_children(storage_path)
         entries_sorted = sorted(entries, key=lambda e: (e["type"] != "folder", e["name"].lower()))
 
-        all_items = []
+        # Linha de ações separada
         if perms.get("can_create") or perms.get("is_admin"):
-            all_items.append(("add_file", None))
-        all_items += [("rec", r) for r in entries_sorted]
+            action_row = tk.Frame(self._cards_frame, bg="#F5F6FA")
+            action_row.pack(fill="x", pady=(4, 0))
+            self._make_add_card(action_row, "📁", "Nova Pasta", "#4A90E2",
+                                self._open_new_folder_dialog)
+            self._make_add_card(action_row, "📄", "Novo Arquivo", "#27AE60",
+                                self._open_new_file_dialog)
+            self._make_add_card(action_row, "📤", "Subir Arquivo", "#4A90E2",
+                                self._open_upload_file_dialog)
+            tk.Frame(self._cards_frame, bg="#E0E6EF", height=1).pack(fill="x", padx=6, pady=(8, 4))
 
         COLS = self._calc_cols()
         row_frame = None
-        for i, (kind, data) in enumerate(all_items):
+        for i, rec in enumerate(entries_sorted):
             if i % COLS == 0:
                 row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
                 row_frame.pack(fill="x", pady=4)
-            if kind == "add_file":
-                self._make_add_card(row_frame, "📄", "Novo Arquivo", "#27AE60",
-                                    self._open_new_file_dialog)
-            elif data["type"] == "folder":
-                self._make_folder_card(row_frame, data)
+            if rec["type"] == "folder":
+                self._make_folder_card(row_frame, rec)
             else:
-                self._make_file_card(row_frame, data)
+                self._make_file_card(row_frame, rec)
 
     def _make_folder_card(self, parent, rec: dict):
         ACCENT = "#4A90E2"
@@ -2453,6 +2556,36 @@ class App(tk.Tk):
                 os.startfile(local)
 
         self._render_cards(self._current_path)
+
+    def _open_upload_file_dialog(self):
+        perms = get_current_user_permissions()
+        if not perms.get("can_create") and not perms.get("is_admin"):
+            messagebox.showwarning("Sem permissão", "Você não tem permissão para enviar arquivos.")
+            return
+        if not self._current_path:
+            messagebox.showwarning("Atenção", "Abra uma pasta primeiro para enviar um arquivo.")
+            return
+
+        local_paths = filedialog.askopenfilenames(
+            title="Selecionar arquivos para upload",
+            filetypes=[
+                ("Documentos", "*.docx *.xlsx *.pdf *.doc *.xls *.pptx *.txt *.png *.jpg *.jpeg *.zip *.rar"),
+                ("Todos os arquivos", "*.*"),
+            ]
+        )
+        if not local_paths:
+            return
+
+        def on_done(skipped):
+            self._render_cards(self._current_path)
+            if skipped:
+                messagebox.showwarning(
+                    "Arquivos ignorados",
+                    f"{len(skipped)} arquivo(s) já existiam na pasta e foram ignorados:\n" +
+                    "\n".join(f"• {e}" for e in skipped)
+                )
+
+        UploadProgressDialog(self, list(local_paths), self._current_path, on_done)
 
     def _open_file(self, rec: dict):
         """Abre o arquivo verificando trava. Baixa do R2 se necessário."""

@@ -7,6 +7,9 @@ import ctypes
 import ctypes.wintypes
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import customtkinter as ctk
+ctk.set_appearance_mode("light")
+ctk.set_default_color_theme("blue")
 from supabase import create_client, Client
 import boto3
 from botocore.config import Config
@@ -1039,7 +1042,7 @@ def file_icon(name: str):
 
 
 # ── App principal ─────────────────────────────────────────────────────────────
-class App(tk.Tk):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Zynor Docs")

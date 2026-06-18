@@ -607,6 +607,10 @@ function openModal(mode) {
   document.getElementById("modalLabel").textContent = mode === "folder" ? "Nome da pasta" : "Nome do arquivo";
   document.getElementById("modalInput").value = "";
   document.getElementById("modalError").textContent = "";
+  document.getElementById("fileTypeGroup").style.display = mode === "file" ? "" : "none";
+  // reseta seleção para .txt
+  const radios = document.querySelectorAll("input[name='fileType']");
+  radios.forEach(r => { r.checked = r.value === ".txt"; });
   document.getElementById("modalOverlay").classList.add("open");
   document.getElementById("modalInput").focus();
 }
@@ -630,7 +634,9 @@ async function confirmModal() {
     if (modalMode === "folder") {
       await api().create_folder(name, parentPath);
     } else {
-      await api().create_file(name, parentPath);
+      const ext      = document.querySelector("input[name='fileType']:checked")?.value || ".txt";
+      const fullName = name.includes(".") ? name : name + ext;
+      await api().create_file(fullName, parentPath);
     }
     closeModal();
     if (parentPath === "") {

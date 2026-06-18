@@ -525,6 +525,24 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 }
 .modal-input:focus { border-color: var(--blue); }
 .modal-error { font-size: 12px; color: #ef4444; margin-top: 6px; min-height: 16px; }
+
+/* ── Seletor de tipo de arquivo ───────────────────────────────── */
+.file-type-options { display: flex; gap: 10px; margin-top: 8px; }
+.file-type-opt { cursor: pointer; flex: 1; }
+.file-type-opt input[type="radio"] { display: none; }
+.file-type-card {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 12px 8px; border-radius: 10px; border: 2px solid var(--border);
+  background: var(--bg); transition: border-color .15s, background .15s;
+  text-align: center;
+}
+.file-type-card svg { width: 28px; height: 28px; margin-bottom: 2px; }
+.file-type-card strong { font-size: 13px; color: var(--text); }
+.file-type-card small { font-size: 11px; color: var(--text-muted); }
+.file-type-opt input:checked + .file-type-card {
+  border-color: var(--blue); background: #eff6ff;
+}
+.file-type-opt:hover .file-type-card { border-color: var(--blue-dark); }
 .modal-footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 0 24px 20px;

@@ -570,21 +570,32 @@ function fmtDate(iso) {
 
 // ── Dropdown Novo ─────────────────────────────────────────────────────────────
 function initNewDropdown() {
-  const dd      = document.getElementById("newDropdown");
-  const btnNew  = document.getElementById("btnNew");
-  const btnCaret= document.getElementById("btnNewCaret");
-
+  // dropdown dentro do folderView
+  const dd       = document.getElementById("newDropdown");
+  const btnNew   = document.getElementById("btnNew");
+  const btnCaret = document.getElementById("btnNewCaret");
   function toggle() { dd.classList.toggle("open"); }
   function close()  { dd.classList.remove("open"); }
-
   btnNew.addEventListener("click",   toggle);
   btnCaret.addEventListener("click", toggle);
-  document.addEventListener("click", e => {
-    if (!e.target.closest("#btnNewGroup")) close();
-  });
-
   document.getElementById("ddNewFolder").addEventListener("click", () => { close(); openModal("folder"); });
   document.getElementById("ddNewFile").addEventListener("click",   () => { close(); openModal("file"); });
+
+  // dropdown na home (só "Nova pasta")
+  const ddHome       = document.getElementById("newDropdownHome");
+  const btnNewHome   = document.getElementById("btnNewHome");
+  const btnCaretHome = document.getElementById("btnNewCaretHome");
+  function toggleHome() { ddHome.classList.toggle("open"); }
+  function closeHome()  { ddHome.classList.remove("open"); }
+  btnNewHome.addEventListener("click",   toggleHome);
+  btnCaretHome.addEventListener("click", toggleHome);
+  document.getElementById("ddNewFolderHome").addEventListener("click", () => { closeHome(); openModal("folder"); });
+
+  // fecha ambos ao clicar fora
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#btnNewGroup"))     close();
+    if (!e.target.closest("#btnNewGroupHome")) closeHome();
+  });
 }
 
 // ── Modal criar ───────────────────────────────────────────────────────────────

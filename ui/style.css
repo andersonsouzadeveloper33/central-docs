@@ -256,7 +256,7 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 .content { flex: 1; overflow-y: auto; padding: 24px 28px; display: flex; flex-direction: column; gap: 20px; }
 
 /* ── Home view ────────────────────────────────────────────────── */
-.home-header { margin-bottom: 20px; }
+.home-header { margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; }
 .home-title { font-size: 24px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
 .home-sub { font-size: 13.5px; color: var(--text-muted); }
 

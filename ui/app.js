@@ -407,9 +407,9 @@ async function loadGrid(path) {
         if (item) openDetail(item);
       });
 
-      // duplo clique em pasta → navega
-      if (row.dataset.type === "folder") {
-        row.addEventListener("dblclick", async () => {
+      // duplo clique em pasta → navega; em arquivo → abre
+      row.addEventListener("dblclick", async () => {
+        if (row.dataset.type === "folder") {
           const folder = { storage_path: row.dataset.path, name: row.dataset.name };
           let node = document.querySelector(`.tree-node[data-path="${row.dataset.path}"]`);
           if (!node) {
@@ -419,8 +419,10 @@ async function loadGrid(path) {
           }
           closeDetail();
           await selectNode(node, folder);
-        });
-      }
+        } else {
+          await openFile(row.dataset.path, row.dataset.name);
+        }
+      });
     });
 
     const footer = document.querySelector(".file-list-footer");
@@ -484,12 +486,41 @@ function closeDetail() {
   document.getElementById("detailPanel").classList.remove("open");
 }
 
+async function openFile(storagePath, filename) {
+  showToast(`Abrindo ${filename}…`, "info");
+  try {
+    const res = await api().open_file(storagePath, filename);
+    if (!res.ok) showToast(`Erro ao abrir: ${res.error}`, "error");
+  } catch(e) {
+    showToast(`Erro ao abrir: ${e}`, "error");
+  }
+}
+
 function initDetailTabs() {
   document.querySelectorAll(".detail-tab").forEach(tab => {
     tab.addEventListener("click", () => {
       document.querySelectorAll(".detail-tab").forEach(t => t.classList.remove("active"));
       tab.classList.add("active");
     });
+  });
+
+  document.getElementById("detailDeleteBtn")?.addEventListener("click", async () => {
+    if (!detailItem) return;
+    const label = detailItem.type === "folder" ? "pasta" : "arquivo";
+    if (!confirm(`Excluir ${label} "${detailItem.name}"? Esta ação não pode ser desfeita.`)) return;
+    try {
+      const res = await api().delete_item(detailItem.type, detailItem.id, detailItem.storage_path);
+      if (res.ok) {
+        showToast(`${detailItem.name} excluído.`, "success");
+        closeDetail();
+        await loadGrid(state.currentPath);
+        await loadStats(state.currentPath);
+      } else {
+        showToast(`Erro: ${res.error}`, "error");
+      }
+    } catch(e) {
+      showToast(`Erro: ${e}`, "error");
+    }
   });
 }
 

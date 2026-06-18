@@ -58,6 +58,24 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 
 .login-error { font-size: 12.5px; color: #ef4444; min-height: 16px; margin-top: -8px; }
 
+/* Dropdown histórico de e-mails */
+.email-wrap { position: relative; }
+.email-wrap input { width: 100%; }
+.email-history {
+  display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: #fff; border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.10);
+  z-index: 50; overflow: hidden;
+}
+.email-history.open { display: block; }
+.email-history-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; cursor: pointer; font-size: 13.5px; color: var(--text);
+  transition: background .12s;
+}
+.email-history-item:hover { background: var(--bg); }
+.email-history-item svg { width: 15px; height: 15px; color: var(--text-muted); flex-shrink: 0; }
+
 .login-btn {
   width: 100%; padding: 13px; background: var(--blue); color: #fff;
   border: none; border-radius: 9px; font-size: 15px; font-weight: 600;

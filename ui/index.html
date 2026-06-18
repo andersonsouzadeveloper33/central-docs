@@ -21,7 +21,10 @@
       <div class="login-form">
         <div class="login-field">
           <label>E-mail</label>
-          <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="email" />
+          <div class="email-wrap">
+            <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="off" />
+            <div class="email-history" id="emailHistory"></div>
+          </div>
         </div>
         <div class="login-field">
           <label>Senha</label>

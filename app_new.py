@@ -74,12 +74,37 @@ class Api:
                 "role":                 user.get("role", "user"),
                 "must_change_password": user.get("must_change_password", False),
             }
+            self._save_email_history(email)
             return {
                 "ok":                   True,
                 "must_change_password": user.get("must_change_password", False),
             }
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # ── histórico de e-mails ─────────────────────────────────────────────────
+    def _history_file(self) -> str:
+        path = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, ".last_user")
+
+    def get_email_history(self) -> list:
+        try:
+            with open(self._history_file(), "r", encoding="utf-8") as f:
+                return [e.strip() for e in f.read().splitlines() if e.strip()]
+        except Exception:
+            return []
+
+    def _save_email_history(self, email: str):
+        try:
+            history = self.get_email_history()
+            if email in history:
+                history.remove(email)
+            history.insert(0, email)
+            with open(self._history_file(), "w", encoding="utf-8") as f:
+                f.write("\n".join(history[:10]))
+        except Exception:
+            pass
 
     def _license_validate(self) -> dict:
         """Idêntico ao license_validate() do app.py."""

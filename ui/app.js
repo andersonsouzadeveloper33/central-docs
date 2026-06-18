@@ -91,6 +91,46 @@ function initLogin() {
   btn.addEventListener("click", doLogin);
   [email, pw].forEach(el => el.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); }));
 
+  // histórico de e-mails
+  const emailInput = document.getElementById("loginEmail");
+  const historyBox = document.getElementById("emailHistory");
+
+  async function showEmailHistory() {
+    try {
+      const history = await api().get_email_history();
+      if (!history.length) return;
+      historyBox.innerHTML = history.map(e => `
+        <div class="email-history-item" data-email="${e}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+          ${e}
+        </div>`).join("");
+      historyBox.classList.add("open");
+
+      historyBox.querySelectorAll(".email-history-item").forEach(item => {
+        item.addEventListener("mousedown", e => {
+          e.preventDefault(); // evita blur antes do click
+          emailInput.value = item.dataset.email;
+          historyBox.classList.remove("open");
+          document.getElementById("loginPassword").focus();
+        });
+      });
+    } catch(e) { /* silencioso */ }
+  }
+
+  emailInput.addEventListener("focus", showEmailHistory);
+  emailInput.addEventListener("blur",  () => setTimeout(() => historyBox.classList.remove("open"), 150));
+  emailInput.addEventListener("input", () => {
+    const q = emailInput.value.toLowerCase();
+    historyBox.querySelectorAll(".email-history-item").forEach(item => {
+      item.style.display = item.dataset.email.includes(q) ? "" : "none";
+    });
+    const anyVisible = [...historyBox.querySelectorAll(".email-history-item")].some(i => i.style.display !== "none");
+    historyBox.classList.toggle("open", anyVisible);
+  });
+
   // toggle senha
   const toggle = document.getElementById("pwToggle");
   toggle.addEventListener("click", () => {

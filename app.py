@@ -1328,7 +1328,7 @@ class App(tk.Tk):
         style.configure("Thin.Vertical.TScrollbar", troughcolor="#F5F6FA",
                         background="#C8D0DC", borderwidth=0, arrowsize=0)
 
-        canvas = tk.Canvas(wrapper, bg="#F5F6FA", highlightthickness=0)
+        canvas = tk.Canvas(wrapper, bg="#F0F2F5", highlightthickness=0)
         vsb = ttk.Scrollbar(wrapper, orient="vertical", command=canvas.yview,
                             style="Thin.Vertical.TScrollbar")
 
@@ -1343,7 +1343,7 @@ class App(tk.Tk):
         canvas.configure(yscrollcommand=vsb.set)
         canvas.pack(side="left", fill="both", expand=True)
 
-        self._cards_frame = tk.Frame(canvas, bg="#F5F6FA")
+        self._cards_frame = tk.Frame(canvas, bg="#F0F2F5")
         self._canvas_window = canvas.create_window((0, 0), window=self._cards_frame, anchor="nw")
 
         self._cards_frame.bind("<Configure>", _update_scrollbar)

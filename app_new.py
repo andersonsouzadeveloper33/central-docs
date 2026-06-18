@@ -36,6 +36,50 @@ def _fmt_size(b) -> str:
 # ── API exposta ao JavaScript ────────────────────────────────────────────────
 class Api:
 
+    # ── login ────────────────────────────────────────────────────────────────
+    def login(self, email: str, password: str):
+        global TENANT_ID, CURRENT_USER
+        try:
+            res = sb.table("users").select("*").eq("email", email).execute()
+            if not res.data:
+                return {"ok": False, "error": "E-mail ou senha incorretos."}
+            user = res.data[0]
+
+            import hashlib
+            pw_hash = hashlib.sha256(password.encode()).hexdigest()
+            if user.get("password_hash") != pw_hash:
+                return {"ok": False, "error": "E-mail ou senha incorretos."}
+
+            # carrega tenant
+            TENANT_ID = user.get("tenant_id", "")
+            CURRENT_USER = {
+                "id":                   user["id"],
+                "name":                 user["name"],
+                "email":                user["email"],
+                "role":                 user.get("role", "user"),
+                "must_change_password": user.get("must_change_password", False),
+            }
+            return {
+                "ok":                   True,
+                "must_change_password": user.get("must_change_password", False),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ── troca de senha ───────────────────────────────────────────────────────
+    def change_password(self, new_password: str):
+        try:
+            import hashlib
+            pw_hash = hashlib.sha256(new_password.encode()).hexdigest()
+            sb.table("users").update({
+                "password_hash":        pw_hash,
+                "must_change_password": False,
+            }).eq("id", CURRENT_USER["id"]).execute()
+            CURRENT_USER["must_change_password"] = False
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ── info da sessão ───────────────────────────────────────────────────────
     def get_session(self):
         return {"tenant_id": TENANT_ID, "user": CURRENT_USER}

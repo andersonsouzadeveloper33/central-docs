@@ -7,7 +7,64 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="shell">
+
+  <!-- ── Tela de Login ───────────────────────────────────────────────────── -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-icon">Z</div>
+        <span class="logo-text">Zynor Docs</span>
+      </div>
+      <h2 class="login-title">Bem-vindo de volta</h2>
+      <p class="login-sub">Faça login para acessar seus documentos</p>
+
+      <div class="login-form">
+        <div class="login-field">
+          <label>E-mail</label>
+          <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="email" />
+        </div>
+        <div class="login-field">
+          <label>Senha</label>
+          <div class="pw-wrap">
+            <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" />
+            <button class="pw-toggle" id="pwToggle" tabindex="-1">
+              <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            </button>
+          </div>
+        </div>
+        <p class="login-error" id="loginError"></p>
+        <button class="login-btn" id="loginBtn">Entrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Troca de Senha (primeiro acesso) ────────────────────────────────── -->
+  <div class="login-screen" id="changePwScreen" style="display:none">
+    <div class="login-card">
+      <div class="login-logo">
+        <div class="logo-icon">Z</div>
+        <span class="logo-text">Zynor Docs</span>
+      </div>
+      <h2 class="login-title">Defina sua senha</h2>
+      <p class="login-sub">Por segurança, crie uma nova senha para continuar</p>
+
+      <div class="login-form">
+        <div class="login-field">
+          <label>Nova senha</label>
+          <input id="newPw1" type="password" placeholder="••••••••" />
+        </div>
+        <div class="login-field">
+          <label>Confirmar senha</label>
+          <input id="newPw2" type="password" placeholder="••••••••" />
+        </div>
+        <p class="login-error" id="changePwError"></p>
+        <button class="login-btn" id="changePwBtn">Salvar e entrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="shell" id="appShell" style="display:none">
 
     <!-- ── Sidebar ─────────────────────────────────────────────── -->
     <aside class="sidebar">
@@ -226,7 +283,8 @@
       </div>
     </main>
 
-  </div>
+  </div><!-- /#appShell -->
+
   <!-- Modal: criar pasta / arquivo -->
   <div class="modal-overlay" id="modalOverlay">
     <div class="modal">

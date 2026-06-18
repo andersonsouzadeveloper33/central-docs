@@ -18,8 +18,96 @@ const api = () => window.pywebview?.api;
 // ── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   await pyReady();
-  await loadSession();
-  await loadSidebar();
+
+  // Se veio com sessão do processo pai (CTk), vai direto pro app
+  const session = await api().get_session();
+  if (session.tenant_id && session.user?.id) {
+    showApp();
+    await loadSession();
+    await loadSidebar();
+  } else {
+    showLogin();
+  }
+}
+
+function showLogin() {
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("appShell").style.display    = "none";
+  document.getElementById("loginEmail").focus();
+}
+
+function showApp() {
+  document.getElementById("loginScreen").style.display  = "none";
+  document.getElementById("changePwScreen").style.display = "none";
+  document.getElementById("appShell").style.display     = "flex";
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+function initLogin() {
+  const btn   = document.getElementById("loginBtn");
+  const email = document.getElementById("loginEmail");
+  const pw    = document.getElementById("loginPassword");
+  const errEl = document.getElementById("loginError");
+
+  async function doLogin() {
+    const e = email.value.trim();
+    const p = pw.value;
+    if (!e || !p) { errEl.textContent = "Preencha e-mail e senha."; return; }
+    btn.disabled = true; btn.textContent = "Entrando..."; errEl.textContent = "";
+    try {
+      const res = await api().login(e, p);
+      if (!res.ok) { errEl.textContent = res.error || "Credenciais inválidas."; return; }
+      if (res.must_change_password) {
+        document.getElementById("loginScreen").style.display    = "none";
+        document.getElementById("changePwScreen").style.display = "flex";
+        document.getElementById("newPw1").focus();
+        return;
+      }
+      showApp();
+      await loadSession();
+      await loadSidebar();
+    } catch(e) {
+      errEl.textContent = "Erro ao conectar. Tente novamente.";
+    } finally {
+      btn.disabled = false; btn.textContent = "Entrar";
+    }
+  }
+
+  btn.addEventListener("click", doLogin);
+  [email, pw].forEach(el => el.addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); }));
+
+  // toggle senha
+  const toggle = document.getElementById("pwToggle");
+  toggle.addEventListener("click", () => {
+    const isText = pw.type === "text";
+    pw.type = isText ? "password" : "text";
+    document.getElementById("eyeOpen").style.display   = isText ? "" : "none";
+    document.getElementById("eyeClosed").style.display = isText ? "none" : "";
+  });
+}
+
+function initChangePw() {
+  const btn   = document.getElementById("changePwBtn");
+  const errEl = document.getElementById("changePwError");
+
+  btn.addEventListener("click", async () => {
+    const p1 = document.getElementById("newPw1").value;
+    const p2 = document.getElementById("newPw2").value;
+    if (!p1 || p1.length < 6) { errEl.textContent = "Mínimo 6 caracteres."; return; }
+    if (p1 !== p2) { errEl.textContent = "As senhas não coincidem."; return; }
+    btn.disabled = true; btn.textContent = "Salvando..."; errEl.textContent = "";
+    try {
+      const res = await api().change_password(p1);
+      if (!res.ok) { errEl.textContent = res.error || "Erro ao salvar."; return; }
+      showApp();
+      await loadSession();
+      await loadSidebar();
+    } catch(e) {
+      errEl.textContent = "Erro ao salvar. Tente novamente.";
+    } finally {
+      btn.disabled = false; btn.textContent = "Salvar e entrar";
+    }
+  });
 }
 
 // ── Sessão ───────────────────────────────────────────────────────────────────
@@ -482,6 +570,8 @@ function showToast(msg, type = "ok") {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  initLogin();
+  initChangePw();
   initSearch();
   initDetailTabs();
   initNewDropdown();

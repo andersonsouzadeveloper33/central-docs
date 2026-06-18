@@ -1293,28 +1293,24 @@ class App(ctk.CTk):
                                                corner_radius=0)
         self._breadcrumb_frame.pack(fill="x", pady=(0, 8))
 
-        # Search bar
-        search_frame = ctk.CTkFrame(content, fg_color="#FFFFFF", corner_radius=8,
-                                     border_width=1, border_color="#D0D7E2")
+        # Search bar — tk.Frame para ter altura estável com Entry nativo
+        search_frame = tk.Frame(content, bg="#FFFFFF",
+                                highlightthickness=1, highlightbackground="#D0D7E2",
+                                highlightcolor="#D0D7E2")
         search_frame.pack(fill="x", pady=(0, 10))
 
-        ctk.CTkLabel(search_frame, text="🔍",
-                     font=ctk.CTkFont("Segoe UI", 12),
-                     text_color="#9AAEC1").pack(side="left", padx=(12, 4))
+        tk.Label(search_frame, text="🔍", bg="#FFFFFF", fg="#9AAEC1",
+                 font=("Segoe UI", 12)).pack(side="left", padx=(12, 4))
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", self._on_search_change)
-        ctk.CTkEntry(search_frame, textvariable=self._search_var,
-                     placeholder_text="Buscar arquivos e pastas...",
-                     fg_color=("#FFFFFF", "#FFFFFF"), border_width=0,
-                     text_color="#1E2A3A", placeholder_text_color="#9AAEC1",
-                     height=38, font=ctk.CTkFont("Segoe UI", 12)).pack(
-                     side="left", fill="x", expand=True, padx=(0, 8))
-        clr_btn = ctk.CTkButton(search_frame, text="✕", width=32, height=32,
-                                fg_color="transparent", text_color="#9AAEC1",
-                                hover_color="#F0F2F5", corner_radius=6,
-                                font=ctk.CTkFont("Segoe UI", 11),
-                                command=lambda: self._search_var.set(""))
-        clr_btn.pack(side="right", padx=4)
+        tk.Entry(search_frame, textvariable=self._search_var, bg="#FFFFFF",
+                 fg="#1E2A3A", relief="flat", font=("Segoe UI", 12),
+                 insertbackground="#1E2A3A").pack(
+                 side="left", fill="x", expand=True, ipady=10)
+        clr_lbl = tk.Label(search_frame, text="✕", bg="#FFFFFF", fg="#9AAEC1",
+                           font=("Segoe UI", 11), cursor="hand2", padx=10)
+        clr_lbl.pack(side="right", padx=4)
+        clr_lbl.bind("<Button-1>", lambda _: self._search_var.set(""))
 
         self._result_var = tk.StringVar(value="")
         ctk.CTkLabel(content, textvariable=self._result_var,
@@ -1361,8 +1357,8 @@ class App(ctk.CTk):
         self._canvas_width = 0
         self._resize_after = None
 
-        # Tela inicial
-        self._nav_go("documentos")
+        # Aguarda a janela ser desenhada para que winfo_width() retorne o valor real
+        self.after(50, lambda: self._nav_go("documentos"))
 
     def _on_canvas_resize(self, event):
         self._canvas.itemconfig(self._canvas_window, width=event.width)

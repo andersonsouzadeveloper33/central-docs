@@ -15,9 +15,18 @@ SUPABASE_KEY = (
 )
 sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ── Sessão recebida do processo pai ──────────────────────────────────────────
-TENANT_ID   = os.environ.get("ZYNOR_TENANT_ID", "")
+# ── Sessão recebida do processo pai (ou carregada do config) ─────────────────
+TENANT_ID    = os.environ.get("ZYNOR_TENANT_ID", "")
 CURRENT_USER = json.loads(os.environ.get("ZYNOR_USER", "{}"))
+
+# Se rodando standalone (sem env do pai), carrega tenant do config.json
+if not TENANT_ID:
+    import json as _json
+    _appdata = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ZynorDocs")
+    _cfg_path = os.path.join(_appdata, "config.json")
+    if os.path.exists(_cfg_path):
+        with open(_cfg_path, encoding="utf-8") as _f:
+            TENANT_ID = _json.load(_f).get("tenant_id", "")
 
 # ── Utilitários ──────────────────────────────────────────────────────────────
 def _ui_dir() -> str:
@@ -40,14 +49,15 @@ class Api:
     def login(self, email: str, password: str):
         global TENANT_ID, CURRENT_USER
         try:
-            res = sb.table("users").select("*").eq("email", email).execute()
-            if not res.data:
-                return {"ok": False, "error": "E-mail ou senha incorretos."}
-            user = res.data[0]
-
             import hashlib
             pw_hash = hashlib.sha256(password.encode()).hexdigest()
-            if user.get("password_hash") != pw_hash:
+            res = (sb.table("users")
+                     .select("*")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("email", email)
+                     .eq("password", pw_hash)
+                     .execute())
+            if not res.data:
                 return {"ok": False, "error": "E-mail ou senha incorretos."}
 
             # carrega tenant
@@ -72,7 +82,7 @@ class Api:
             import hashlib
             pw_hash = hashlib.sha256(new_password.encode()).hexdigest()
             sb.table("users").update({
-                "password_hash":        pw_hash,
+                "password":             pw_hash,
                 "must_change_password": False,
             }).eq("id", CURRENT_USER["id"]).execute()
             CURRENT_USER["must_change_password"] = False

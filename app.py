@@ -1444,16 +1444,19 @@ class App(tk.Tk):
 
         # Linha de ações separada
         if perms.get("can_create") or perms.get("is_admin"):
-            action_row = tk.Frame(self._cards_frame, bg="#F5F6FA")
+            action_row = ctk.CTkFrame(self._cards_frame, fg_color="transparent",
+                                      corner_radius=0)
             action_row.pack(fill="x", pady=(4, 0))
             self._make_add_card(action_row, "📁", "Nova Pasta", "#4A90E2",
                                 self._open_new_folder_dialog)
-            tk.Frame(self._cards_frame, bg="#E0E6EF", height=1).pack(fill="x", padx=6, pady=(8, 4))
+            ctk.CTkFrame(self._cards_frame, fg_color="#D8DDE8", height=1,
+                         corner_radius=0).pack(fill="x", padx=6, pady=(8, 4))
 
         row_frame = None
         for i, folder in enumerate(folders):
             if i % COLS == 0:
-                row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
+                row_frame = ctk.CTkFrame(self._cards_frame, fg_color="transparent",
+                                         corner_radius=0)
                 row_frame.pack(fill="x", pady=4)
             self._make_home_folder_card(row_frame, folder)
 
@@ -2274,24 +2277,27 @@ class App(tk.Tk):
         for w in self._breadcrumb_frame.winfo_children():
             w.destroy()
 
-        # Início — sempre volta para a home (listagem do banco)
-        home_lbl = tk.Label(self._breadcrumb_frame, text="Início", bg="#F5F6FA",
-                            fg="#4A90E2", font=("Segoe UI", 10), cursor="hand2")
-        home_lbl.pack(side="left")
-        home_lbl.bind("<Button-1>", lambda _: self._show_home())
-        tk.Label(self._breadcrumb_frame, text="  /  ", bg="#F5F6FA",
-                 fg="#B0BEC5", font=("Segoe UI", 10)).pack(side="left")
+        # Início
+        home_btn = ctk.CTkButton(self._breadcrumb_frame, text="Início", width=0,
+                                 fg_color="transparent", text_color="#4A90E2",
+                                 hover_color="#E8F0FA", corner_radius=4, height=26,
+                                 font=ctk.CTkFont("Segoe UI", 11),
+                                 command=self._show_home)
+        home_btn.pack(side="left")
+        ctk.CTkLabel(self._breadcrumb_frame, text=" / ", text_color="#B0BEC5",
+                     font=ctk.CTkFont("Segoe UI", 11)).pack(side="left")
 
         # Botão voltar
         if self._history:
-            back = tk.Label(self._breadcrumb_frame, text="← Voltar", bg="#F5F6FA",
-                            fg="#4A90E2", font=("Segoe UI", 10), cursor="hand2")
-            back.pack(side="left", padx=(0, 12))
-            back.bind("<Button-1>", lambda _: self._go_back())
+            back_btn = ctk.CTkButton(self._breadcrumb_frame, text="← Voltar", width=0,
+                                     fg_color="transparent", text_color="#4A90E2",
+                                     hover_color="#E8F0FA", corner_radius=4, height=26,
+                                     font=ctk.CTkFont("Segoe UI", 11),
+                                     command=self._go_back)
+            back_btn.pack(side="left", padx=(0, 8))
 
-        # Partes do caminho — oculta o tenant_id (primeiro segmento)
+        # Partes do caminho
         parts = [p for p in path.strip("/").split("/") if p]
-        # remove o segmento do tenant_id do breadcrumb visual
         if parts and parts[0] == TENANT_ID:
             parts = parts[1:]
         accumulated = f"{TENANT_ID}/"
@@ -2299,18 +2305,20 @@ class App(tk.Tk):
         for i, part in enumerate(parts):
             accumulated = accumulated + part + "/"
             is_last = (i == len(parts) - 1)
-
             acc_copy = accumulated
-            lbl = tk.Label(self._breadcrumb_frame, text=part, bg="#F5F6FA",
-                           fg="#1E2A3A" if is_last else "#4A90E2",
-                           font=("Segoe UI", 10, "bold" if is_last else "normal"),
-                           cursor="arrow" if is_last else "hand2")
-            lbl.pack(side="left")
 
-            if not is_last:
-                lbl.bind("<Button-1>", lambda _, p=acc_copy: self._navigate_to(p))
-                tk.Label(self._breadcrumb_frame, text="  /  ", bg="#F5F6FA",
-                         fg="#B0BEC5", font=("Segoe UI", 10)).pack(side="left")
+            if is_last:
+                ctk.CTkLabel(self._breadcrumb_frame, text=part, text_color="#1E2A3A",
+                             font=ctk.CTkFont("Segoe UI", 11, weight="bold")).pack(side="left")
+            else:
+                lbl_btn = ctk.CTkButton(self._breadcrumb_frame, text=part, width=0,
+                                        fg_color="transparent", text_color="#4A90E2",
+                                        hover_color="#E8F0FA", corner_radius=4, height=26,
+                                        font=ctk.CTkFont("Segoe UI", 11),
+                                        command=lambda p=acc_copy: self._navigate_to(p))
+                lbl_btn.pack(side="left")
+                ctk.CTkLabel(self._breadcrumb_frame, text=" / ", text_color="#B0BEC5",
+                             font=ctk.CTkFont("Segoe UI", 11)).pack(side="left")
 
     # ── Renderiza cards ───────────────────────────────────────────────────────
     def _clear_cards(self):
@@ -2326,7 +2334,8 @@ class App(tk.Tk):
 
         # Linha de ações separada
         if perms.get("can_create") or perms.get("is_admin"):
-            action_row = tk.Frame(self._cards_frame, bg="#F5F6FA")
+            action_row = ctk.CTkFrame(self._cards_frame, fg_color="transparent",
+                                      corner_radius=0)
             action_row.pack(fill="x", pady=(4, 0))
             self._make_add_card(action_row, "📁", "Nova Pasta", "#4A90E2",
                                 self._open_new_folder_dialog)
@@ -2334,13 +2343,15 @@ class App(tk.Tk):
                                 self._open_new_file_dialog)
             self._make_add_card(action_row, "📤", "Subir Arquivo", "#4A90E2",
                                 self._open_upload_file_dialog)
-            tk.Frame(self._cards_frame, bg="#E0E6EF", height=1).pack(fill="x", padx=6, pady=(8, 4))
+            ctk.CTkFrame(self._cards_frame, fg_color="#D8DDE8", height=1,
+                         corner_radius=0).pack(fill="x", padx=6, pady=(8, 4))
 
         COLS = self._calc_cols()
         row_frame = None
         for i, rec in enumerate(entries_sorted):
             if i % COLS == 0:
-                row_frame = tk.Frame(self._cards_frame, bg="#F5F6FA")
+                row_frame = ctk.CTkFrame(self._cards_frame, fg_color="transparent",
+                                         corner_radius=0)
                 row_frame.pack(fill="x", pady=4)
             if rec["type"] == "folder":
                 self._make_folder_card(row_frame, rec)

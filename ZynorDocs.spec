@@ -5,7 +5,7 @@ a = Analysis(
     ['C:\\Projetos\\centraldocs\\app.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Projetos\\centraldocs\\config.json', '.'), ('C:\\Projetos\\centraldocs\\icon.ico', '.')],
+    datas=[('C:\\Projetos\\centraldocs\\icon.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

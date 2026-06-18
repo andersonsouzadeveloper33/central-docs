@@ -49,15 +49,6 @@ def _load_config() -> dict:
 _config = _load_config()
 TENANT_ID: str = _config.get("tenant_id", "")
 
-if not TENANT_ID:
-    import tkinter as _tk
-    _tk.Tk().withdraw()
-    import tkinter.messagebox as _mb
-    _mb.showerror("Configuração ausente",
-                  "Arquivo config.json não encontrado ou inválido.\n"
-                  "Contate o suporte.")
-    raise SystemExit(1)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SUPABASE — banco de dados
@@ -596,6 +587,86 @@ class NewFolderDialog(tk.Toplevel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# LICENÇA / ATIVAÇÃO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def license_validate(tenant_id: str) -> dict:
+    """Verifica se o tenant possui licença ativa. Fails open em erro de rede."""
+    try:
+        res = sb.table("licenses").select("active, expires_at") \
+                .eq("tenant_id", tenant_id).eq("active", True).execute()
+        if not res.data:
+            return {"ok": False, "error": "Sua licença foi revogada ou não encontrada.\nContate o suporte."}
+        lic = res.data[0]
+        if lic.get("expires_at"):
+            from datetime import datetime, timezone
+            exp = datetime.fromisoformat(lic["expires_at"].replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) > exp:
+                return {"ok": False, "error": "Sua licença expirou.\nContate o suporte para renovar."}
+        return {"ok": True}
+    except Exception:
+        return {"ok": True}
+
+
+def license_activate(code: str) -> dict:
+    """Valida o código de ativação no Supabase. Retorna {ok, tenant_id, error}."""
+    try:
+        res = sb.table("licenses").select("tenant_id, active") \
+                .eq("code", code).execute()
+        if not res.data:
+            return {"ok": False, "error": "Código de ativação inválido."}
+        lic = res.data[0]
+        if not lic.get("active"):
+            return {"ok": False, "error": "Este código já foi utilizado ou foi revogado."}
+        return {"ok": True, "tenant_id": lic["tenant_id"]}
+    except Exception as e:
+        return {"ok": False, "error": f"Erro ao validar: {e}"}
+
+
+def license_save_tenant(tenant_id: str):
+    """Persiste o tenant_id no config.json local."""
+    try:
+        with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+            _json.dump({"tenant_id": tenant_id}, f, indent=2)
+    except OSError as e:
+        raise RuntimeError(f"Erro ao salvar configuração: {e}") from e
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TENANT INFO
+# ══════════════════════════════════════════════════════════════════════════════
+
+_TENANT_INFO: dict = {}
+_TENANT_LOGO_PATH: str = ""
+
+
+def tenant_load():
+    global _TENANT_INFO
+    if not TENANT_ID:
+        return
+    try:
+        res = sb.table("tenants").select("name, logo_path, slug") \
+                .eq("id", TENANT_ID).execute()
+        if res.data:
+            _TENANT_INFO = res.data[0]
+    except Exception:
+        pass
+
+
+def tenant_download_logo():
+    global _TENANT_LOGO_PATH
+    logo_key = _TENANT_INFO.get("logo_path", "")
+    if not logo_key:
+        return
+    dest = os.path.join(_appdata_dir(), "logo_tenant")
+    try:
+        r2.download_file(CF_BUCKET, logo_key, dest)
+        _TENANT_LOGO_PATH = dest
+    except Exception:
+        pass
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # AUTENTICAÇÃO
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -604,7 +675,10 @@ def _hash_password(password: str) -> str:
 
 
 def auth_login(email: str, password: str) -> dict | None:
-    """Valida credenciais do tenant. Retorna o usuário ou None se inválido."""
+    """Valida credenciais e licença do tenant. Retorna o usuário ou None se inválido."""
+    lic = license_validate(TENANT_ID)
+    if not lic["ok"]:
+        return {"_license_error": lic["error"]}
     hashed = _hash_password(password)
     res = sb.table("users").select("*").eq("tenant_id", TENANT_ID).eq("email", email).eq("password", hashed).execute()
     return res.data[0] if res.data else None
@@ -2909,9 +2983,16 @@ class LoginWindow(tk.Tk):
         if not user:
             self._show_error("E-mail ou senha incorretos.")
             return
-        # Armazena o usuário globalmente
+        if user.get("_license_error"):
+            self._show_error(user["_license_error"])
+            return
         global CURRENT_USER
-        CURRENT_USER = {"id": user["id"], "name": user["name"], "email": user["email"]}
+        CURRENT_USER = {
+            "id":                   user["id"],
+            "name":                 user["name"],
+            "email":                user["email"],
+            "must_change_password": user.get("must_change_password", False),
+        }
         try:
             history = _load_user_history()
             if email in history:
@@ -2944,9 +3025,216 @@ class LoginWindow(tk.Tk):
         self.geometry(f"+{event.x_root - self._drag_start_x}+{event.y_root - self._drag_start_y}")
 
 
+# ── Tela de ativação de licença ───────────────────────────────────────────────
+class ActivationWindow(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Zynor Docs")
+        if os.path.exists(_ICON_FILE):
+            self.iconbitmap(_ICON_FILE)
+        self._activated = False
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.resizable(False, False)
+        self.configure(bg="#1E2A3A")
+
+        W, H = 480, 480
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{W}x{H}+{(sw - W)//2}+{(sh - H)//2}")
+        self._build()
+
+    def _build(self):
+        # Titlebar
+        titlebar = tk.Frame(self, bg="#141F2D", height=36)
+        titlebar.pack(fill="x")
+        titlebar.pack_propagate(False)
+        tk.Label(titlebar, text="⚡  Zynor Docs", bg="#141F2D", fg="#6B8099",
+                 font=("Segoe UI", 11)).pack(side="left", padx=12)
+        close_btn = tk.Label(titlebar, text="✕", bg="#141F2D", fg="#6B8099",
+                             font=("Segoe UI", 12), cursor="hand2", padx=12)
+        close_btn.pack(side="right")
+        close_btn.bind("<Button-1>", lambda _: self.destroy())
+        close_btn.bind("<Enter>",    lambda _: close_btn.config(fg="#FFFFFF", bg="#E53935"))
+        close_btn.bind("<Leave>",    lambda _: close_btn.config(fg="#6B8099", bg="#141F2D"))
+
+        body = tk.Frame(self, bg="#1E2A3A")
+        body.pack(fill="both", expand=True, padx=48, pady=8)
+
+        tk.Label(body, text="⚡", bg="#1E2A3A", fg="#4A90E2",
+                 font=("Segoe UI", 40)).pack(pady=(20, 0))
+        tk.Label(body, text="Zynor Docs", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 22, "bold")).pack(pady=(6, 0))
+        tk.Label(body, text="Digite o código de ativação fornecido pelo suporte",
+                 bg="#1E2A3A", fg="#6B8099", font=("Segoe UI", 11),
+                 wraplength=340).pack(pady=(4, 24))
+
+        self._code_var = tk.StringVar()
+        entry = tk.Entry(body, textvariable=self._code_var, font=("Segoe UI", 14),
+                         bg="#2E3F52", fg="#FFFFFF", insertbackground="#FFFFFF",
+                         relief="flat", justify="center")
+        entry.pack(fill="x", ipady=10, pady=(0, 8))
+        entry.bind("<Return>", lambda _: self._activate())
+
+        self._error_label = tk.Label(body, text="", bg="#1E2A3A", fg="#E53935",
+                                     font=("Segoe UI", 11), wraplength=360)
+        self._error_label.pack(pady=(0, 8))
+
+        self._btn = tk.Button(body, text="Ativar", bg="#4A90E2", fg="#FFFFFF",
+                              relief="flat", font=("Segoe UI", 13, "bold"),
+                              cursor="hand2", activebackground="#357ABD",
+                              activeforeground="#FFFFFF", pady=12,
+                              command=self._activate)
+        self._btn.pack(fill="x")
+
+        tk.Label(body, text="Precisa de ajuda? contato@zynor.com.br",
+                 bg="#1E2A3A", fg="#3A4F65", font=("Segoe UI", 9)).pack(
+                 side="bottom", pady=(0, 8))
+
+        entry.focus_set()
+
+    def _activate(self):
+        code = self._code_var.get().strip().upper()
+        if not code:
+            self._error_label.config(text="Informe o código de ativação.")
+            return
+        self._btn.config(text="Validando...", state="disabled")
+        self._error_label.config(text="")
+        self.update_idletasks()
+        result = license_activate(code)
+        if not result["ok"]:
+            self._error_label.config(text=result["error"])
+            self._btn.config(text="Ativar", state="normal")
+            return
+        try:
+            license_save_tenant(result["tenant_id"])
+        except RuntimeError as e:
+            self._error_label.config(text=str(e))
+            self._btn.config(text="Ativar", state="normal")
+            return
+        self._activated = True
+        self.destroy()
+
+
+# ── Tela de troca de senha obrigatória ───────────────────────────────────────
+class ChangePasswordWindow(tk.Tk):
+    def __init__(self, user_id: str):
+        super().__init__()
+        self._user_id = user_id
+        self._changed = False
+        self.title("Zynor Docs")
+        if os.path.exists(_ICON_FILE):
+            self.iconbitmap(_ICON_FILE)
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.resizable(False, False)
+        self.configure(bg="#1E2A3A")
+
+        W, H = 440, 530
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{W}x{H}+{(sw - W)//2}+{(sh - H)//2}")
+        self._build()
+
+    def _build(self):
+        titlebar = tk.Frame(self, bg="#141F2D", height=36)
+        titlebar.pack(fill="x")
+        titlebar.pack_propagate(False)
+        tk.Label(titlebar, text="⚡  Zynor Docs", bg="#141F2D", fg="#6B8099",
+                 font=("Segoe UI", 11)).pack(side="left", padx=12)
+
+        body = tk.Frame(self, bg="#1E2A3A")
+        body.pack(fill="both", expand=True, padx=48, pady=8)
+
+        tk.Label(body, text="🔒", bg="#1E2A3A", font=("Segoe UI", 36)).pack(pady=(20, 0))
+        tk.Label(body, text="Crie sua senha", bg="#1E2A3A", fg="#FFFFFF",
+                 font=("Segoe UI", 22, "bold")).pack(pady=(8, 0))
+        tk.Label(body, text="Este é seu primeiro acesso. Defina uma senha pessoal.",
+                 bg="#1E2A3A", fg="#6B8099", font=("Segoe UI", 11),
+                 wraplength=320).pack(pady=(4, 24))
+
+        tk.Label(body, text="Nova senha", bg="#1E2A3A", fg="#9AAEC1",
+                 font=("Segoe UI", 12), anchor="w").pack(fill="x")
+        self._new_var = tk.StringVar()
+        new_e = tk.Entry(body, textvariable=self._new_var, show="•",
+                         bg="#2E3F52", fg="#FFFFFF", insertbackground="#FFFFFF",
+                         relief="flat", font=("Segoe UI", 13))
+        new_e.pack(fill="x", ipady=10, pady=(4, 12))
+
+        tk.Label(body, text="Confirmar senha", bg="#1E2A3A", fg="#9AAEC1",
+                 font=("Segoe UI", 12), anchor="w").pack(fill="x")
+        self._confirm_var = tk.StringVar()
+        conf_e = tk.Entry(body, textvariable=self._confirm_var, show="•",
+                          bg="#2E3F52", fg="#FFFFFF", insertbackground="#FFFFFF",
+                          relief="flat", font=("Segoe UI", 13))
+        conf_e.pack(fill="x", ipady=10, pady=(4, 16))
+        conf_e.bind("<Return>", lambda _: self._save())
+
+        self._error_label = tk.Label(body, text="", bg="#1E2A3A", fg="#E53935",
+                                     font=("Segoe UI", 11))
+        self._error_label.pack(pady=(0, 8))
+
+        self._btn = tk.Button(body, text="Salvar senha", bg="#4A90E2", fg="#FFFFFF",
+                              relief="flat", font=("Segoe UI", 13, "bold"),
+                              cursor="hand2", activebackground="#357ABD",
+                              activeforeground="#FFFFFF", pady=12,
+                              command=self._save)
+        self._btn.pack(fill="x")
+        new_e.focus_set()
+
+    def _save(self):
+        nova     = self._new_var.get().strip()
+        confirma = self._confirm_var.get().strip()
+        if not nova:
+            self._error_label.config(text="Informe a nova senha.")
+            return
+        if len(nova) < 6:
+            self._error_label.config(text="A senha deve ter ao menos 6 caracteres.")
+            return
+        if nova != confirma:
+            self._error_label.config(text="As senhas não coincidem.")
+            return
+        self._btn.config(text="Salvando...", state="disabled")
+        self._error_label.config(text="")
+        self.update_idletasks()
+        try:
+            sb.table("users").update({
+                "password": _hash_password(nova),
+                "must_change_password": False,
+            }).eq("id", self._user_id).execute()
+            self._changed = True
+            self.destroy()
+        except Exception as e:
+            self._error_label.config(text=f"Erro ao salvar: {e}")
+            self._btn.config(text="Salvar senha", state="normal")
+
+
 if __name__ == "__main__":
+    # 1. Ativação — exibe tela de código se não houver tenant_id configurado
+    if not TENANT_ID:
+        activation = ActivationWindow()
+        activation.mainloop()
+        if not activation._activated:
+            raise SystemExit(0)
+        # Recarrega TENANT_ID após ativação
+        import importlib, sys as _sys2
+        _cfg2 = _load_config()
+        TENANT_ID = _cfg2.get("tenant_id", "")
+
+    tenant_load()
+    tenant_download_logo()
+
+    # 2. Login
     login = LoginWindow()
     login.mainloop()
-    if login._logged_in:
-        app = App()
-        app.mainloop()
+    if not login._logged_in:
+        raise SystemExit(0)
+
+    # 3. Primeiro acesso — forçar troca de senha
+    if CURRENT_USER.get("must_change_password"):
+        chpwd = ChangePasswordWindow(CURRENT_USER["id"])
+        chpwd.mainloop()
+        if not chpwd._changed:
+            raise SystemExit(0)
+
+    # 4. App principal
+    app = App()
+    app.mainloop()

@@ -25,13 +25,14 @@ Name: "portuguese"; MessagesFile: "compiler:Languages\Portuguese.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Criar ícone na Área de Trabalho"; GroupDescription: "Ícones adicionais:"; Flags: unchecked
+Name: "resetconfig"; Description: "Reinstalar do zero (apaga configurações e exige nova ativação de licença)"; GroupDescription: "Tipo de instalação:"; Flags: unchecked; Check: ConfigExists
 
 [Files]
 ; Executável principal
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-; config.json — copiado mas NÃO sobrescrito se já existir (preserva dados do cliente)
-Source: "..\config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+; config.json — gravado em %APPDATA%\ZynorDocs\ (pasta gravável pelo usuário)
+Source: "..\config.json"; DestDir: "{userappdata}\ZynorDocs"; Flags: onlyifdoesntexist uninsneveruninstall
 
 ; Ícone separado para atalhos
 Source: "..\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -51,3 +52,18 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Abrir {#MyAppName} agora"; Flag
 [UninstallDelete]
 ; Remove arquivos gerados em runtime pelo app (opcional — comente se quiser preservar)
 ; Type: filesandordirs; Name: "{app}"
+
+[Code]
+{ Retorna True se já existe um config.json em %APPDATA%\ZynorDocs — ativa a task de reset }
+function ConfigExists(): Boolean;
+begin
+  Result := FileExists(ExpandConstant('{userappdata}\ZynorDocs\config.json'));
+end;
+
+{ Antes de copiar arquivos: se o usuário escolheu reinstalar, apaga o config }
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    if WizardIsTaskSelected('resetconfig') then
+      DeleteFile(ExpandConstant('{userappdata}\ZynorDocs\config.json'));
+end;

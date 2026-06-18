@@ -1222,6 +1222,16 @@ class App(ctk.CTk):
 
         tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=(16, 4))
 
+        # Botão nova UI (preview)
+        ctk.CTkButton(self._sidebar, text="  🚀  Nova Interface", anchor="w",
+                      fg_color="transparent", bg_color=SB,
+                      text_color="#F59E0B", hover_color="#263549",
+                      corner_radius=6, height=40,
+                      font=ctk.CTkFont("Segoe UI", 12),
+                      command=self._open_new_ui).pack(fill="x", padx=10, pady=1)
+
+        tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=(4, 4))
+
         folders_header = tk.Frame(self._sidebar, bg=SB)
         folders_header.pack(fill="x", padx=16, pady=(4, 4))
         tk.Label(folders_header, text="MINHAS PASTAS", bg=SB, fg="#6B8099",
@@ -2468,6 +2478,13 @@ class App(ctk.CTk):
                 self._render_cards(parent_sp)
             else:
                 self._show_home()
+
+    def _open_new_ui(self):
+        import threading
+        def _launch():
+            import app_new
+            app_new.open_window()
+        threading.Thread(target=_launch, daemon=True).start()
 
     def _add_folder_to_sidebar(self, folder: dict):
         btn = ctk.CTkButton(self._folders_list,

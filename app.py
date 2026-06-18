@@ -1127,19 +1127,19 @@ class App(ctk.CTk):
         w, h, x, y = self._get_work_area()
         self.geometry(f"{w}x{h}+{x}+{y}")
         self._is_maximized = True
-        self._btn_max.config(text="❐")
+        self._btn_max.configure(text="❐")
 
     def _toggle_maximize(self):
         if self._is_maximized:
             self.geometry(self._restore_geometry)
             self._is_maximized = False
-            self._btn_max.config(text="□")
+            self._btn_max.configure(text="□")
         else:
             self._restore_geometry = self.geometry()
             w, h, x, y = self._get_work_area()
             self.geometry(f"{w}x{h}+{x}+{y}")
             self._is_maximized = True
-            self._btn_max.config(text="❐")
+            self._btn_max.configure(text="❐")
 
     def _minimize(self):
         SW_MINIMIZE = 6
@@ -1285,7 +1285,8 @@ class App(ctk.CTk):
         # ── Página: Documentos ────────────────────────────────────────────────
         self._page_documentos = ctk.CTkFrame(self._pages_container, fg_color="#F0F2F5",
                                               corner_radius=0)
-        content = self._page_documentos
+        # wrapper interno com padding — _page_documentos é re-packed sem padding em _nav_go
+        content = tk.Frame(self._page_documentos, bg="#F0F2F5")
         content.pack(fill="both", expand=True, padx=24, pady=16)
 
         # Breadcrumb

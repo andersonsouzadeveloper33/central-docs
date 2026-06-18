@@ -59,8 +59,8 @@ class Api:
                      .execute())
             if not res.data:
                 return {"ok": False, "error": "E-mail ou senha incorretos."}
+            user = res.data[0]
 
-            # carrega tenant
             TENANT_ID = user.get("tenant_id", "")
             CURRENT_USER = {
                 "id":                   user["id"],

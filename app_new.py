@@ -321,22 +321,39 @@ class Api:
             "id":           f["id"],
             "name":         f["name"],
             "storage_path": f["storage_path"],
-            "size":         _fmt_size(f.get("size")),
+            "size":         _fmt_size(self._real_size(f["id"], f["storage_path"], f.get("size"))),
             "updated_at":   f.get("created_at") or "",
             "locked_by":    f.get("locked_by"),
             "locked_name":  f.get("locked_name"),
         } for f in files]
         return result
 
+    def _real_size(self, file_id: str, storage_path: str, current_size) -> int:
+        """Busca tamanho real no R2 quando o banco tem 0/null; atualiza o banco."""
+        if current_size and int(current_size) > 0:
+            return int(current_size)
+        try:
+            meta = _r2().head_object(Bucket=CF_BUCKET, Key=storage_path)
+            size = meta.get("ContentLength", 0)
+            if size > 0:
+                sb.table("files").update({"size": size}).eq("id", file_id).execute()
+            return size
+        except Exception:
+            # fallback: tenta cópia local
+            local = _local_path(storage_path)
+            if os.path.exists(local):
+                return os.path.getsize(local)
+            return 0
+
     def get_folder_stats(self, storage_path: str) -> dict:
         if not TENANT_ID: return {}
-        files   = (sb.table("files").select("size")
+        files   = (sb.table("files").select("id, storage_path, size")
                      .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
                      .execute()).data or []
         folders = (sb.table("folders").select("id")
                      .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
                      .execute()).data or []
-        total = sum(int(f.get("size") or 0) for f in files)
+        total = sum(self._real_size(f["id"], f["storage_path"], f.get("size")) for f in files)
         return {"file_count": len(files), "folder_count": len(folders), "total_size": _fmt_size(total)}
 
     def create_folder(self, name: str, parent_path: str) -> dict:

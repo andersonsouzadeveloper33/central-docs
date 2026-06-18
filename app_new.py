@@ -290,8 +290,7 @@ class Api:
             config=Config(signature_version="s3v4"),
             region_name="auto",
         )
-        r2_key = f"{TENANT_ID}/{storage_path}"
-        s3.put_object(Bucket=CF_BUCKET, Key=r2_key, Body=data)
+        s3.put_object(Bucket=CF_BUCKET, Key=storage_path, Body=data)
 
         # registra no banco
         sb.table("files").insert({
@@ -316,7 +315,7 @@ class Api:
                 config=Config(signature_version="s3v4"),
                 region_name="auto",
             )
-            r2_key = f"{TENANT_ID}/{storage_path}"
+            r2_key = storage_path
             ext    = os.path.splitext(filename)[1]
             tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=ext,
                                                  prefix="zynor_", dir=tempfile.gettempdir())

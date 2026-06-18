@@ -308,7 +308,7 @@ class Api:
 def open_window():
     api   = Api()
     index = os.path.join(_ui_dir(), "index.html").replace(os.sep, "/")
-    webview.create_window(
+    window = webview.create_window(
         "Zynor Docs",
         url=f"file:///{index}",
         js_api=api,
@@ -316,7 +316,7 @@ def open_window():
         height=800,
         min_size=(900, 600),
     )
-    webview.start(debug=False)
+    webview.start(lambda: window.maximize(), debug=False)
 
 if __name__ == "__main__":
     open_window()

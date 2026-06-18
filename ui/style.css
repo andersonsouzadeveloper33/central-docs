@@ -269,3 +269,20 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 }
 .btn-more:hover { background: #f1f5f9; color: var(--text); }
 .file-list-footer { padding: 12px 16px; font-size: 12.5px; color: var(--text-muted); border-top: 1px solid var(--border); }
+
+/* ── file icon variants ───────────────────────────────────────── */
+.file-icon-sm.pdf  { background: #fee2e2; }
+.file-icon-sm.doc  { background: #dbeafe; }
+.file-icon-sm.img  { background: #d1fae5; }
+.file-icon-sm.xls  { background: #dcfce7; }
+.file-icon-sm.generic { background: #e2e8f0; }
+
+/* ── estados dinâmicos ────────────────────────────────────────── */
+.loading-cell, .empty-cell {
+  text-align: center; padding: 32px 16px;
+  color: var(--text-muted); font-size: 13.5px;
+}
+.folder-item.loading, .folder-item.muted { color: #475569; cursor: default; font-size: 12px; }
+.item-row.selected { background: #eff6ff !important; }
+.item-row[data-type="folder"] { cursor: pointer; }
+.item-row[data-type="folder"]:hover .name-cell { color: var(--blue); }

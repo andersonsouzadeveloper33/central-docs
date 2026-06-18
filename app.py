@@ -2480,11 +2480,17 @@ class App(ctk.CTk):
                 self._show_home()
 
     def _open_new_ui(self):
-        import threading
-        def _launch():
-            import app_new
-            app_new.open_window()
-        threading.Thread(target=_launch, daemon=True).start()
+        import subprocess, sys, os, json as _json
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_new.py")
+        env = os.environ.copy()
+        env["ZYNOR_TENANT_ID"] = TENANT_ID or ""
+        env["ZYNOR_USER"] = _json.dumps({
+            "id":    CURRENT_USER.get("id", ""),
+            "name":  CURRENT_USER.get("name", ""),
+            "email": CURRENT_USER.get("email", ""),
+            "role":  CURRENT_USER.get("role", "user"),
+        })
+        subprocess.Popen([sys.executable, script], env=env)
 
     def _add_folder_to_sidebar(self, folder: dict):
         btn = ctk.CTkButton(self._folders_list,

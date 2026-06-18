@@ -330,13 +330,14 @@ async function selectNode(wrap, folder) {
   await loadStats(folder.storage_path);
 }
 
-// monta breadcrumb a partir do storage_path (ex: "projetos/zelar")
+// monta breadcrumb a partir do storage_path, ocultando o tenant ID (1º segmento UUID)
 function buildCrumbs(storagePath, name) {
   const parts = storagePath.split("/").filter(Boolean);
-  // usa o nome real só no último nível — os intermediários usam o próprio segmento
-  return parts.map((seg, i) => ({
-    name: i === parts.length - 1 ? name : seg,
-    path: parts.slice(0, i + 1).join("/"),
+  // remove o primeiro segmento se for um UUID (tenant ID)
+  const start = (parts.length > 0 && /^[0-9a-f-]{36}$/i.test(parts[0])) ? 1 : 0;
+  return parts.slice(start).map((seg, i, arr) => ({
+    name: i === arr.length - 1 ? name : seg,
+    path: parts.slice(0, start + i + 1).join("/"),
   }));
 }
 
@@ -475,7 +476,7 @@ function openDetail(item) {
 
   document.getElementById("detailName").textContent = item.name;
   document.getElementById("dType").textContent      = item.type === "folder" ? "Pasta" : extLabel(item.name);
-  document.getElementById("dLocation").textContent  = item.storage_path.split("/").slice(0, -1).join(" / ") || "Raiz";
+  document.getElementById("dLocation").textContent  = maskPath(item.storage_path.split("/").slice(0, -1).join("/")) || "Raiz";
   document.getElementById("dSize").textContent      = item.type === "folder" ? "—" : (item.size || "—");
   document.getElementById("dCreated").textContent   = item.updated_at ? fmtDate(item.updated_at) : "—";
   document.getElementById("dModified").textContent  = item.updated_at ? fmtDate(item.updated_at) : "—";
@@ -537,6 +538,18 @@ function initSearch() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Remove o primeiro segmento do path (tenant ID UUID) e formata para exibição
+function maskPath(path) {
+  if (!path) return "";
+  const parts = path.split("/").filter(Boolean);
+  // se o primeiro segmento parece um UUID (tenant), remove
+  if (parts.length > 0 && /^[0-9a-f-]{36}$/i.test(parts[0])) {
+    parts.shift();
+  }
+  return parts.join(" / ");
+}
+
 function fileExt(name) {
   const ext = name.split(".").pop().toLowerCase();
   const map = { pdf:"pdf", txt:"txt", doc:"doc", docx:"doc",

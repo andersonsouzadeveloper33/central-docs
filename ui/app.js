@@ -760,5 +760,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // libera todas as travas desta sessão ao fechar a janela
+  window.addEventListener("beforeunload", () => {
+    try { api()?.unlock_all(); } catch {}
+  });
+
   init();
 });

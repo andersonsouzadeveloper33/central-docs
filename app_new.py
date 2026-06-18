@@ -470,10 +470,20 @@ class Api:
     def open_file(self, storage_path: str, filename: str) -> dict:
         """Verifica trava, baixa do R2 (ou usa local), abre com programa padrão."""
         try:
-            # verifica se está travado por outra sessão
+            # verifica se está travado por outra sessão (ignora locks com mais de 2h — sessão morta)
             lock = self.get_file_lock_info_by_path(storage_path)
             if lock:
-                return {"ok": False, "error": f'Arquivo em uso por {lock["locked_name"]}.'}
+                from datetime import datetime, timezone, timedelta
+                locked_at = lock.get("locked_at")
+                stale = False
+                if locked_at:
+                    try:
+                        dt = datetime.fromisoformat(locked_at.replace("Z", "+00:00"))
+                        stale = datetime.now(timezone.utc) - dt > timedelta(hours=2)
+                    except Exception:
+                        stale = True
+                if not stale:
+                    return {"ok": False, "error": f'Arquivo em uso por {lock["locked_name"]}.'}
 
             local = _storage_download(storage_path)
             if not local:

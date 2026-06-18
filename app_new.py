@@ -45,10 +45,16 @@ def _fmt_size(b) -> str:
 # ── API exposta ao JavaScript ────────────────────────────────────────────────
 class Api:
 
-    # ── login ────────────────────────────────────────────────────────────────
+    # ── login (mesma lógica do app.py) ──────────────────────────────────────
     def login(self, email: str, password: str):
         global TENANT_ID, CURRENT_USER
         try:
+            # 1. valida licença antes de qualquer coisa
+            lic = self._license_validate()
+            if not lic["ok"]:
+                return {"ok": False, "error": lic["error"]}
+
+            # 2. valida credenciais
             import hashlib
             pw_hash = hashlib.sha256(password.encode()).hexdigest()
             res = (sb.table("users")
@@ -61,7 +67,6 @@ class Api:
                 return {"ok": False, "error": "E-mail ou senha incorretos."}
             user = res.data[0]
 
-            TENANT_ID = user.get("tenant_id", "")
             CURRENT_USER = {
                 "id":                   user["id"],
                 "name":                 user["name"],
@@ -75,6 +80,26 @@ class Api:
             }
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def _license_validate(self) -> dict:
+        """Idêntico ao license_validate() do app.py."""
+        try:
+            res = (sb.table("licenses")
+                     .select("active, expires_at")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("active", True)
+                     .execute())
+            if not res.data:
+                return {"ok": False, "error": "Sua licença foi revogada ou não encontrada.\nContate o suporte."}
+            lic = res.data[0]
+            if lic.get("expires_at"):
+                from datetime import datetime, timezone
+                exp = datetime.fromisoformat(lic["expires_at"].replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > exp:
+                    return {"ok": False, "error": "Sua licença expirou.\nContate o suporte para renovar."}
+            return {"ok": True}
+        except Exception:
+            return {"ok": True}  # fail-open em erro de rede
 
     # ── troca de senha ───────────────────────────────────────────────────────
     def change_password(self, new_password: str):

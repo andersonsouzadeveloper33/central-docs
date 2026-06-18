@@ -1469,59 +1469,49 @@ class App(tk.Tk):
                      text_color="#1E2A3A").pack(side="left")
 
     def _make_add_card(self, parent, icon: str, label: str, color: str, cmd):
-        card = tk.Frame(parent, bg="#FFFFFF", cursor="hand2",
-                        highlightthickness=2, highlightbackground="#E0E6EF",
-                        width=160, height=130)
+        card = ctk.CTkFrame(parent, fg_color="#FFFFFF", corner_radius=10,
+                            border_width=2, border_color="#E0E6EF",
+                            width=160, height=130, cursor="hand2")
         card.pack(side="left", padx=6, pady=2)
         card.pack_propagate(False)
 
-        tk.Label(card, text=icon, bg="#FFFFFF", fg=color,
-                 font=("Segoe UI", 28)).pack(pady=(14, 2))
-        tk.Label(card, text=f"+ {label}", bg="#FFFFFF", fg=color,
-                 font=("Segoe UI", 9, "bold")).pack()
+        ctk.CTkLabel(card, text=icon, font=ctk.CTkFont("Segoe UI", 28),
+                     text_color=color).pack(pady=(18, 2))
+        ctk.CTkLabel(card, text=f"+ {label}", font=ctk.CTkFont("Segoe UI", 9, weight="bold"),
+                     text_color=color).pack()
 
         def on_enter(_):
-            card.config(highlightbackground=color, bg="#F8FAFF")
-            for w in card.winfo_children():
-                try: w.config(bg="#F8FAFF")
-                except Exception: pass
-
+            card.configure(fg_color="#F0F7FF", border_color=color)
         def on_leave(_):
-            card.config(highlightbackground="#E0E6EF", bg="#FFFFFF")
-            for w in card.winfo_children():
-                try: w.config(bg="#FFFFFF")
-                except Exception: pass
+            card.configure(fg_color="#FFFFFF", border_color="#E0E6EF")
 
-        for w in [card] + list(card.winfo_children()):
+        card.bind("<Enter>", on_enter)
+        card.bind("<Leave>", on_leave)
+        card.bind("<Button-1>", lambda _: cmd())
+        for w in card.winfo_children():
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
             w.bind("<Button-1>", lambda _: cmd())
 
     def _make_home_folder_card(self, parent, folder: dict):
-        card = tk.Frame(parent, bg="#FFFFFF", cursor="hand2",
-                        highlightthickness=1, highlightbackground="#E0E6EF",
-                        width=160, height=130)
+        card = ctk.CTkFrame(parent, fg_color="#FFFFFF", corner_radius=10,
+                            border_width=1, border_color="#E0E6EF",
+                            width=160, height=130, cursor="hand2")
         card.pack(side="left", padx=6, pady=2)
         card.pack_propagate(False)
 
-        tk.Label(card, text="📁", bg="#FFFFFF", font=("Segoe UI", 30)).pack(pady=(14, 2))
-        tk.Label(card, text=folder["name"], bg="#FFFFFF", fg="#1E2A3A",
-                 font=("Segoe UI", 9, "bold"), wraplength=140, justify="center").pack()
+        ctk.CTkLabel(card, text="📁", font=ctk.CTkFont("Segoe UI", 30)).pack(pady=(18, 2))
+        ctk.CTkLabel(card, text=folder["name"], text_color="#1E2A3A",
+                     font=ctk.CTkFont("Segoe UI", 9, weight="bold"),
+                     wraplength=140).pack()
 
-        sp = folder["storage_path"]
+        sp  = folder["storage_path"]
         fid = folder["id"]
 
         def on_enter(_):
-            card.config(highlightbackground="#4A90E2", bg="#F0F5FF")
-            for w in card.winfo_children():
-                try: w.config(bg="#F0F5FF")
-                except Exception: pass
-
+            card.configure(fg_color="#F0F7FF", border_color="#4A90E2")
         def on_leave(_):
-            card.config(highlightbackground="#E0E6EF", bg="#FFFFFF")
-            for w in card.winfo_children():
-                try: w.config(bg="#FFFFFF")
-                except Exception: pass
+            card.configure(fg_color="#FFFFFF", border_color="#E0E6EF")
 
         def on_right_click(event, _fid=fid):
             perms = get_current_user_permissions()
@@ -1532,7 +1522,11 @@ class App(tk.Tk):
                              command=lambda: self._remove_folder(_fid))
             menu.tk_popup(event.x_root, event.y_root)
 
-        for w in [card] + list(card.winfo_children()):
+        card.bind("<Enter>", on_enter)
+        card.bind("<Leave>", on_leave)
+        card.bind("<Button-1>", lambda _, p=sp: self._enter_folder(p))
+        card.bind("<Button-3>", on_right_click)
+        for w in card.winfo_children():
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
             w.bind("<Button-1>", lambda _, p=sp: self._enter_folder(p))
@@ -2360,44 +2354,31 @@ class App(tk.Tk):
 
     def _make_folder_card(self, parent, rec: dict):
         ACCENT = "#4A90E2"
-        card = tk.Frame(parent, bg="#FFFFFF", cursor="hand2",
-                        highlightthickness=1, highlightbackground="#E0E6EF",
-                        width=160, height=130)
+        card = ctk.CTkFrame(parent, fg_color="#FFFFFF", corner_radius=10,
+                            border_width=1, border_color="#E0E6EF",
+                            width=160, height=130, cursor="hand2")
         card.pack(side="left", padx=8, pady=6)
         card.pack_propagate(False)
 
-        # Barra colorida no topo
-        tk.Frame(card, bg=ACCENT, height=3).pack(fill="x")
-
-        body = tk.Frame(card, bg="#FFFFFF")
-        body.pack(fill="both", expand=True, padx=12, pady=8)
-
-        tk.Label(body, text="📁", bg="#FFFFFF", font=("Segoe UI", 30),
-                 anchor="w").pack(anchor="w")
-        tk.Label(body, text=rec["name"], bg="#FFFFFF", fg="#1E2A3A",
-                 font=("Segoe UI", 10, "bold"), wraplength=136,
-                 justify="left", anchor="w").pack(anchor="w", pady=(4, 0))
+        ctk.CTkFrame(card, fg_color=ACCENT, height=4, corner_radius=0).pack(fill="x")
+        ctk.CTkLabel(card, text="📁", font=ctk.CTkFont("Segoe UI", 30),
+                     anchor="w").pack(anchor="w", padx=12, pady=(8, 0))
+        ctk.CTkLabel(card, text=rec["name"], text_color="#1E2A3A",
+                     font=ctk.CTkFont("Segoe UI", 10, weight="bold"),
+                     wraplength=136, justify="left", anchor="w").pack(
+                     anchor="w", padx=12, pady=(4, 0))
 
         sp = rec["storage_path"]
 
-        def _all_widgets():
-            return [card, body] + list(body.winfo_children())
-
         def on_enter(_):
-            card.config(highlightbackground=ACCENT, bg="#F0F5FF")
-            body.config(bg="#F0F5FF")
-            for w in body.winfo_children():
-                try: w.config(bg="#F0F5FF")
-                except Exception: pass
-
+            card.configure(fg_color="#F0F7FF", border_color=ACCENT)
         def on_leave(_):
-            card.config(highlightbackground="#E0E6EF", bg="#FFFFFF")
-            body.config(bg="#FFFFFF")
-            for w in body.winfo_children():
-                try: w.config(bg="#FFFFFF")
-                except Exception: pass
+            card.configure(fg_color="#FFFFFF", border_color="#E0E6EF")
 
-        for w in _all_widgets():
+        card.bind("<Enter>", on_enter)
+        card.bind("<Leave>", on_leave)
+        card.bind("<Button-1>", lambda _, p=sp: self._navigate_to(p))
+        for w in card.winfo_children():
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
             w.bind("<Button-1>", lambda _, p=sp: self._navigate_to(p))
@@ -2405,57 +2386,38 @@ class App(tk.Tk):
     def _make_file_card(self, parent, rec: dict):
         icon, color = file_icon(rec["name"])
         ext = os.path.splitext(rec["name"])[1].upper().lstrip(".") or "FILE"
-
-        card = tk.Frame(parent, bg="#FFFFFF", cursor="hand2",
-                        highlightthickness=1, highlightbackground="#E0E6EF",
-                        width=160, height=130)
-        card.pack(side="left", padx=8, pady=6)
-        card.pack_propagate(False)
-
-        # Barra colorida no topo
-        tk.Frame(card, bg=color, height=3).pack(fill="x")
-
-        body = tk.Frame(card, bg="#FFFFFF")
-        body.pack(fill="both", expand=True, padx=12, pady=8)
-
-        # Linha: ícone + badge de extensão
-        top_row = tk.Frame(body, bg="#FFFFFF")
-        top_row.pack(fill="x", anchor="w")
-        tk.Label(top_row, text=icon, bg="#FFFFFF", fg=color,
-                 font=("Segoe UI", 26)).pack(side="left")
-        badge = tk.Label(top_row, text=ext, bg=color, fg="#FFFFFF",
-                         font=("Segoe UI", 7, "bold"),
-                         padx=4, pady=1)
-        badge.pack(side="left", anchor="s", pady=(0, 4), padx=(4, 0))
-
-        # Nome do arquivo
         name_no_ext = os.path.splitext(rec["name"])[0]
-        tk.Label(body, text=name_no_ext, bg="#FFFFFF", fg="#1E2A3A",
-                 font=("Segoe UI", 10, "bold"), wraplength=136,
-                 justify="left", anchor="w").pack(anchor="w", pady=(4, 0))
-
         sp  = rec["storage_path"]
         fid = rec["id"]
 
-        def on_enter(_):
-            card.config(highlightbackground=color, bg="#FAFAFA")
-            body.config(bg="#FAFAFA")
-            top_row.config(bg="#FAFAFA")
-            for w in list(top_row.winfo_children()) + list(body.winfo_children()):
-                if w is badge:
-                    continue
-                try: w.config(bg="#FAFAFA")
-                except Exception: pass
+        card = ctk.CTkFrame(parent, fg_color="#FFFFFF", corner_radius=10,
+                            border_width=1, border_color="#E0E6EF",
+                            width=160, height=130, cursor="hand2")
+        card.pack(side="left", padx=8, pady=6)
+        card.pack_propagate(False)
 
+        ctk.CTkFrame(card, fg_color=color, height=4, corner_radius=0).pack(fill="x")
+
+        body = ctk.CTkFrame(card, fg_color="transparent", corner_radius=0)
+        body.pack(fill="both", expand=True, padx=12, pady=8)
+
+        top_row = ctk.CTkFrame(body, fg_color="transparent", corner_radius=0)
+        top_row.pack(fill="x", anchor="w")
+        ctk.CTkLabel(top_row, text=icon, font=ctk.CTkFont("Segoe UI", 26),
+                     text_color=color).pack(side="left")
+        ctk.CTkLabel(top_row, text=ext, fg_color=color, text_color="#FFFFFF",
+                     font=ctk.CTkFont("Segoe UI", 7, weight="bold"),
+                     corner_radius=4, width=0).pack(side="left", anchor="s",
+                                                    pady=(0, 4), padx=(4, 0))
+        ctk.CTkLabel(body, text=name_no_ext, text_color="#1E2A3A",
+                     font=ctk.CTkFont("Segoe UI", 10, weight="bold"),
+                     wraplength=136, justify="left", anchor="w").pack(
+                     anchor="w", pady=(4, 0))
+
+        def on_enter(_):
+            card.configure(fg_color="#FAFBFF", border_color=color)
         def on_leave(_):
-            card.config(highlightbackground="#E0E6EF", bg="#FFFFFF")
-            body.config(bg="#FFFFFF")
-            top_row.config(bg="#FFFFFF")
-            for w in list(top_row.winfo_children()) + list(body.winfo_children()):
-                if w is badge:
-                    continue
-                try: w.config(bg="#FFFFFF")
-                except Exception: pass
+            card.configure(fg_color="#FFFFFF", border_color="#E0E6EF")
 
         def on_right_click(event, _fid=fid):
             perms = get_current_user_permissions()
@@ -2472,7 +2434,7 @@ class App(tk.Tk):
             if menu.index("end") is not None:
                 menu.tk_popup(event.x_root, event.y_root)
 
-        for w in [card, body, top_row] + list(top_row.winfo_children()) + list(body.winfo_children()):
+        for w in [card] + list(card.winfo_children()):
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
             w.bind("<Button-1>", lambda e, _rec=rec: self._open_file(_rec))

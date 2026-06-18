@@ -243,7 +243,7 @@ class Api:
         }).execute()
         return {"ok": True}
 
-    # ── criar arquivo (texto vazio) ──────────────────────────────────────────
+    # ── criar arquivo (em branco → R2 + banco) ──────────────────────────────
     def create_file(self, name: str, parent_path: str):
         existing = (sb.table("files")
                       .select("id")
@@ -253,13 +253,45 @@ class Api:
                       .execute()).data
         if existing:
             raise Exception(f'Já existe um arquivo chamado "{name}" aqui.')
-        storage_path = f"{parent_path}/{name}" if parent_path else name
+
+        storage_path = f"{parent_path}/{name}" if parent_path else f"{TENANT_ID}/{name}"
+
+        # cria conteúdo em branco conforme extensão
+        import tempfile, boto3
+        from botocore.config import Config
+        ext = os.path.splitext(name)[1].lower()
+        tmp_path = os.path.join(tempfile.gettempdir(), f"zynor_new_{name}")
+        try:
+            if ext in (".docx",):
+                from docx import Document
+                Document().save(tmp_path)
+            elif ext in (".xlsx",):
+                import openpyxl
+                openpyxl.Workbook().save(tmp_path)
+            else:
+                open(tmp_path, "w").close()
+
+            # upload para R2
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=CF_ENDPOINT,
+                aws_access_key_id=CF_ACCESS_KEY,
+                aws_secret_access_key=CF_SECRET_KEY,
+                config=Config(signature_version="s3v4"),
+                region_name="auto",
+            )
+            s3.upload_file(tmp_path, CF_BUCKET, storage_path)
+            file_size = os.path.getsize(tmp_path)
+        finally:
+            try: os.remove(tmp_path)
+            except: pass
+
         sb.table("files").insert({
             "tenant_id":    TENANT_ID,
             "name":         name,
             "storage_path": storage_path,
             "parent_path":  parent_path,
-            "size":         0,
+            "size":         file_size,
         }).execute()
         return {"ok": True}
 
@@ -315,6 +347,7 @@ class Api:
                 config=Config(signature_version="s3v4"),
                 region_name="auto",
             )
+            print(f"[R2] open_file key='{storage_path}' bucket='{CF_BUCKET}'")
             r2_key = storage_path
             ext    = os.path.splitext(filename)[1]
             tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=ext,

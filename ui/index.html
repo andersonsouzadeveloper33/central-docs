@@ -161,37 +161,53 @@
           </div>
         </div>
 
-        <!-- File list -->
-        <div class="file-list-wrap">
-          <table class="file-table">
-            <thead>
-              <tr>
-                <th>Nome <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></th>
-                <th>Tipo</th>
-                <th>Tamanho</th>
-                <th>Modificado em <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody id="fileList">
-              <tr>
-                <td class="name-cell"><div class="folder-icon-sm"></div> Ícones - Branco</td>
-                <td>Pasta</td><td>—</td><td>Hoje às 14:32</td>
-                <td><button class="btn-more">⋮</button></td>
-              </tr>
-              <tr>
-                <td class="name-cell"><div class="folder-icon-sm"></div> Ícones Zelar - Azul</td>
-                <td>Pasta</td><td>—</td><td>Ontem às 16:21</td>
-                <td><button class="btn-more">⋮</button></td>
-              </tr>
-              <tr>
-                <td class="name-cell"><div class="file-icon-sm txt"></div> condomain.txt</td>
-                <td>Texto</td><td>2 KB</td><td>Ontem às 10:12</td>
-                <td><button class="btn-more">⋮</button></td>
-              </tr>
-            </tbody>
-          </table>
-          <div class="file-list-footer">Mostrando 1 a 3 de 6 itens</div>
+        <!-- File list + detail panel -->
+        <div class="content-bottom">
+          <div class="file-list-wrap">
+            <table class="file-table">
+              <thead>
+                <tr>
+                  <th>Nome <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></th>
+                  <th>Tipo</th>
+                  <th>Tamanho</th>
+                  <th>Modificado em <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="fileList"></tbody>
+            </table>
+            <div class="file-list-footer" id="listFooter">—</div>
+          </div>
+
+          <!-- Painel de detalhes -->
+          <aside class="detail-panel" id="detailPanel">
+            <div class="detail-icon" id="detailIcon"></div>
+            <div class="detail-name" id="detailName">—</div>
+
+            <div class="detail-tabs">
+              <button class="detail-tab active" data-tab="info">Detalhes</button>
+              <button class="detail-tab" data-tab="activity">Atividades</button>
+            </div>
+
+            <div class="detail-body" id="detailBody">
+              <div class="detail-row"><span class="detail-key">Tipo</span><span class="detail-val" id="dType">—</span></div>
+              <div class="detail-row"><span class="detail-key">Localização</span><span class="detail-val" id="dLocation">—</span></div>
+              <div class="detail-row"><span class="detail-key">Tamanho</span><span class="detail-val" id="dSize">—</span></div>
+              <div class="detail-row"><span class="detail-key">Criado em</span><span class="detail-val" id="dCreated">—</span></div>
+              <div class="detail-row"><span class="detail-key">Modificado em</span><span class="detail-val" id="dModified">—</span></div>
+            </div>
+
+            <div class="detail-actions">
+              <button class="detail-btn share">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                Compartilhar
+              </button>
+              <button class="detail-btn delete" id="detailDeleteBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                Excluir
+              </button>
+            </div>
+          </aside>
         </div>
 
       </div>

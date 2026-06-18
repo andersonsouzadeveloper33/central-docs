@@ -211,23 +211,30 @@ async function loadGrid(path) {
         </tr>`;
     }).join("");
 
-    tbody.querySelectorAll(".item-row[data-type='folder']").forEach(row => {
-      row.addEventListener("dblclick", async () => {
-        const folder = { storage_path: row.dataset.path, name: row.dataset.name };
-        // tenta encontrar o nó na sidebar para selecioná-lo visualmente
-        let node = document.querySelector(`.tree-node[data-path="${row.dataset.path}"]`);
-        if (!node) {
-          // cria nó temporário sem inserir na sidebar para não duplicar
-          node = document.createElement("div");
-          node.dataset.path = row.dataset.path;
-          node.appendChild(document.createElement("div")).className = "tree-row";
-        }
-        await selectNode(node, folder);
-      });
+    tbody.querySelectorAll(".item-row").forEach(row => {
+      const item = items.find(i => i.storage_path === row.dataset.path);
+
+      // clique simples → seleciona + abre painel de detalhes
       row.addEventListener("click", () => {
         tbody.querySelectorAll(".item-row").forEach(r => r.classList.remove("selected"));
         row.classList.add("selected");
+        if (item) openDetail(item);
       });
+
+      // duplo clique em pasta → navega
+      if (row.dataset.type === "folder") {
+        row.addEventListener("dblclick", async () => {
+          const folder = { storage_path: row.dataset.path, name: row.dataset.name };
+          let node = document.querySelector(`.tree-node[data-path="${row.dataset.path}"]`);
+          if (!node) {
+            node = document.createElement("div");
+            node.dataset.path = row.dataset.path;
+            node.appendChild(document.createElement("div")).className = "tree-row";
+          }
+          closeDetail();
+          await selectNode(node, folder);
+        });
+      }
     });
 
     const footer = document.querySelector(".file-list-footer");
@@ -249,6 +256,47 @@ async function loadStats(path) {
 function setStatVal(idx, val) {
   const cards = document.querySelectorAll(".stat-value");
   if (cards[idx]) cards[idx].textContent = val;
+}
+
+// ── Painel de detalhes ────────────────────────────────────────────────────────
+let detailItem = null;
+
+function openDetail(item) {
+  detailItem = item;
+  const panel = document.getElementById("detailPanel");
+  panel.classList.add("open");
+
+  // ícone
+  const iconEl = document.getElementById("detailIcon");
+  if (item.type === "folder") {
+    iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+  } else {
+    const colors = { pdf:"#ef4444", doc:"#3b82f6", img:"#22c55e", xls:"#16a34a", txt:"#64748b", generic:"#94a3b8" };
+    const ext = fileExt(item.name);
+    const c = colors[ext] || colors.generic;
+    iconEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+  }
+
+  document.getElementById("detailName").textContent = item.name;
+  document.getElementById("dType").textContent      = item.type === "folder" ? "Pasta" : extLabel(item.name);
+  document.getElementById("dLocation").textContent  = item.storage_path.split("/").slice(0, -1).join(" / ") || "Raiz";
+  document.getElementById("dSize").textContent      = item.type === "folder" ? "—" : (item.size || "—");
+  document.getElementById("dCreated").textContent   = item.updated_at ? fmtDate(item.updated_at) : "—";
+  document.getElementById("dModified").textContent  = item.updated_at ? fmtDate(item.updated_at) : "—";
+}
+
+function closeDetail() {
+  detailItem = null;
+  document.getElementById("detailPanel").classList.remove("open");
+}
+
+function initDetailTabs() {
+  document.querySelectorAll(".detail-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".detail-tab").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+    });
+  });
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -282,4 +330,17 @@ function fmtDate(iso) {
   } catch { return iso; }
 }
 
-document.addEventListener("DOMContentLoaded", () => { initSearch(); init(); });
+document.addEventListener("DOMContentLoaded", () => {
+  initSearch();
+  initDetailTabs();
+
+  // fechar painel clicando fora
+  document.querySelector(".content").addEventListener("click", e => {
+    if (!e.target.closest(".item-row") && !e.target.closest(".detail-panel")) {
+      closeDetail();
+      document.querySelectorAll(".item-row").forEach(r => r.classList.remove("selected"));
+    }
+  });
+
+  init();
+});

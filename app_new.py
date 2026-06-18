@@ -113,6 +113,90 @@ class Api:
             "total_size":   _fmt_size(total_size),
         }
 
+    # ── criar pasta ─────────────────────────────────────────────────────────
+    def create_folder(self, name: str, parent_path: str):
+        existing = (sb.table("folders")
+                      .select("id")
+                      .eq("tenant_id", TENANT_ID)
+                      .eq("parent_path", parent_path)
+                      .eq("name", name)
+                      .execute()).data
+        if existing:
+            raise Exception(f'Já existe uma pasta chamada "{name}" aqui.')
+        storage_path = f"{parent_path}/{name}" if parent_path else name
+        sb.table("folders").insert({
+            "tenant_id":    TENANT_ID,
+            "name":         name,
+            "storage_path": storage_path,
+            "parent_path":  parent_path,
+        }).execute()
+        return {"ok": True}
+
+    # ── criar arquivo (texto vazio) ──────────────────────────────────────────
+    def create_file(self, name: str, parent_path: str):
+        existing = (sb.table("files")
+                      .select("id")
+                      .eq("tenant_id", TENANT_ID)
+                      .eq("parent_path", parent_path)
+                      .eq("name", name)
+                      .execute()).data
+        if existing:
+            raise Exception(f'Já existe um arquivo chamado "{name}" aqui.')
+        storage_path = f"{parent_path}/{name}" if parent_path else name
+        sb.table("files").insert({
+            "tenant_id":    TENANT_ID,
+            "name":         name,
+            "storage_path": storage_path,
+            "parent_path":  parent_path,
+            "size":         0,
+        }).execute()
+        return {"ok": True}
+
+    # ── upload de arquivo (base64 → Cloudflare R2 + registro no banco) ──────
+    def upload_file(self, filename: str, b64_data: str, parent_path: str):
+        import base64, os as _os
+        data = base64.b64decode(b64_data)
+        storage_path = f"{parent_path}/{filename}" if parent_path else filename
+
+        # verifica duplicata
+        existing = (sb.table("files")
+                      .select("id")
+                      .eq("tenant_id", TENANT_ID)
+                      .eq("parent_path", parent_path)
+                      .eq("name", filename)
+                      .execute()).data
+        if existing:
+            raise Exception(f'"{filename}" já existe nesta pasta.')
+
+        # envia ao R2
+        import boto3
+        from botocore.config import Config
+        CF_ACCOUNT  = _os.environ.get("CF_ACCOUNT_ID", "")
+        CF_KEY_ID   = _os.environ.get("CF_ACCESS_KEY_ID", "")
+        CF_SECRET   = _os.environ.get("CF_SECRET_ACCESS_KEY", "")
+        CF_BUCKET   = _os.environ.get("CF_BUCKET", "")
+
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=f"https://{CF_ACCOUNT}.r2.cloudflarestorage.com",
+            aws_access_key_id=CF_KEY_ID,
+            aws_secret_access_key=CF_SECRET,
+            config=Config(signature_version="s3v4"),
+            region_name="auto",
+        )
+        r2_key = f"{TENANT_ID}/{storage_path}"
+        s3.put_object(Bucket=CF_BUCKET, Key=r2_key, Body=data)
+
+        # registra no banco
+        sb.table("files").insert({
+            "tenant_id":    TENANT_ID,
+            "name":         filename,
+            "storage_path": storage_path,
+            "parent_path":  parent_path,
+            "size":         len(data),
+        }).execute()
+        return {"ok": True}
+
     def ping(self):
         return {"ok": True}
 

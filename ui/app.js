@@ -330,9 +330,163 @@ function fmtDate(iso) {
   } catch { return iso; }
 }
 
+// ── Dropdown Novo ─────────────────────────────────────────────────────────────
+function initNewDropdown() {
+  const dd      = document.getElementById("newDropdown");
+  const btnNew  = document.getElementById("btnNew");
+  const btnCaret= document.getElementById("btnNewCaret");
+
+  function toggle() { dd.classList.toggle("open"); }
+  function close()  { dd.classList.remove("open"); }
+
+  btnNew.addEventListener("click",   toggle);
+  btnCaret.addEventListener("click", toggle);
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#btnNewGroup")) close();
+  });
+
+  document.getElementById("ddNewFolder").addEventListener("click", () => { close(); openModal("folder"); });
+  document.getElementById("ddNewFile").addEventListener("click",   () => { close(); openModal("file"); });
+}
+
+// ── Modal criar ───────────────────────────────────────────────────────────────
+let modalMode = "folder";
+
+function openModal(mode) {
+  if (!state.currentPath) return showToast("Selecione uma pasta primeiro.", "warn");
+  modalMode = mode;
+  document.getElementById("modalTitle").textContent = mode === "folder" ? "Nova pasta" : "Novo arquivo";
+  document.getElementById("modalLabel").textContent = mode === "folder" ? "Nome da pasta" : "Nome do arquivo";
+  document.getElementById("modalInput").value = "";
+  document.getElementById("modalError").textContent = "";
+  document.getElementById("modalOverlay").classList.add("open");
+  document.getElementById("modalInput").focus();
+}
+
+function closeModal() {
+  document.getElementById("modalOverlay").classList.remove("open");
+}
+
+async function confirmModal() {
+  const name = document.getElementById("modalInput").value.trim();
+  const errEl = document.getElementById("modalError");
+  if (!name) { errEl.textContent = "Digite um nome."; return; }
+
+  const btn = document.getElementById("modalConfirm");
+  btn.disabled = true;
+  btn.textContent = "Criando...";
+  errEl.textContent = "";
+
+  try {
+    if (modalMode === "folder") {
+      await api().create_folder(name, state.currentPath);
+    } else {
+      await api().create_file(name, state.currentPath);
+    }
+    closeModal();
+    await loadGrid(state.currentPath);
+    await loadStats(state.currentPath);
+    showToast(`"${name}" criado com sucesso!`);
+  } catch(e) {
+    errEl.textContent = `Erro: ${e}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Criar";
+  }
+}
+
+function initModal() {
+  document.getElementById("modalClose").addEventListener("click",   closeModal);
+  document.getElementById("modalCancel").addEventListener("click",  closeModal);
+  document.getElementById("modalConfirm").addEventListener("click", confirmModal);
+  document.getElementById("modalInput").addEventListener("keydown", e => {
+    if (e.key === "Enter") confirmModal();
+    if (e.key === "Escape") closeModal();
+  });
+  document.getElementById("modalOverlay").addEventListener("click", e => {
+    if (e.target === document.getElementById("modalOverlay")) closeModal();
+  });
+}
+
+// ── Upload ────────────────────────────────────────────────────────────────────
+function initUpload() {
+  const btnUpload = document.getElementById("btnUpload");
+  const fileInput = document.getElementById("fileInput");
+
+  btnUpload.addEventListener("click", () => {
+    if (!state.currentPath) return showToast("Selecione uma pasta primeiro.", "warn");
+    fileInput.click();
+  });
+
+  fileInput.addEventListener("change", async () => {
+    const files = Array.from(fileInput.files);
+    if (!files.length) return;
+    fileInput.value = "";
+
+    const overlay  = document.getElementById("uploadOverlay");
+    const nameEl   = document.getElementById("uploadFilename");
+    const barEl    = document.getElementById("uploadBarFill");
+    const countEl  = document.getElementById("uploadCounter");
+
+    overlay.classList.add("open");
+    let done = 0;
+
+    for (const file of files) {
+      nameEl.textContent  = file.name;
+      countEl.textContent = `${done} / ${files.length}`;
+
+      try {
+        // lê o arquivo como base64 e manda pro Python
+        const b64 = await toBase64(file);
+        await api().upload_file(file.name, b64, state.currentPath);
+      } catch(e) {
+        console.warn("upload error:", file.name, e);
+      }
+
+      done++;
+      barEl.style.width = `${(done / files.length) * 100}%`;
+      countEl.textContent = `${done} / ${files.length}`;
+    }
+
+    nameEl.textContent = "Concluído!";
+    await new Promise(r => setTimeout(r, 900));
+    overlay.classList.remove("open");
+    barEl.style.width = "0%";
+    await loadGrid(state.currentPath);
+    await loadStats(state.currentPath);
+    showToast(`${done} arquivo(s) enviado(s) com sucesso!`);
+  });
+}
+
+function toBase64(file) {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload  = () => res(reader.result.split(",")[1]); // remove "data:...;base64,"
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg, type = "ok") {
+  let toast = document.getElementById("zynorToast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "zynorToast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.className   = `toast toast-${type} show`;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toast.classList.remove("show"), 3000);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initSearch();
   initDetailTabs();
+  initNewDropdown();
+  initModal();
+  initUpload();
 
   // fechar painel clicando fora
   document.querySelector(".content").addEventListener("click", e => {

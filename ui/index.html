@@ -116,19 +116,32 @@
               <input type="text" placeholder="Buscar arquivos e pastas..." />
             </div>
             <div class="toolbar-right">
-              <div class="btn-new-group">
-                <button class="btn-primary">
+              <div class="btn-new-group" id="btnNewGroup">
+                <button class="btn-primary" id="btnNew">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                   Novo
                 </button>
-                <button class="btn-primary btn-caret">
+                <button class="btn-primary btn-caret" id="btnNewCaret">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
+                <!-- dropdown -->
+                <div class="new-dropdown" id="newDropdown">
+                  <button class="new-dd-item" id="ddNewFolder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    Nova pasta
+                  </button>
+                  <button class="new-dd-item" id="ddNewFile">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Novo arquivo (texto)
+                  </button>
+                </div>
               </div>
-              <button class="btn-secondary">
+              <button class="btn-secondary" id="btnUpload">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
                 Upload
               </button>
+              <!-- input file oculto -->
+              <input type="file" id="fileInput" multiple style="display:none" />
               <div class="view-toggle">
                 <button class="view-btn active">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -214,6 +227,41 @@
     </main>
 
   </div>
+  <!-- Modal: criar pasta / arquivo -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="modalTitle">Nova pasta</span>
+        <button class="modal-close" id="modalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label" id="modalLabel">Nome da pasta</label>
+        <input class="modal-input" id="modalInput" type="text" placeholder="Digite o nome..." />
+        <p class="modal-error" id="modalError"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="modalCancel">Cancelar</button>
+        <button class="modal-btn confirm" id="modalConfirm">Criar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: progresso de upload -->
+  <div class="modal-overlay" id="uploadOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Enviando arquivos</span>
+      </div>
+      <div class="modal-body">
+        <p class="upload-filename" id="uploadFilename">—</p>
+        <div class="upload-bar-wrap">
+          <div class="upload-bar-fill" id="uploadBarFill" style="width:0%"></div>
+        </div>
+        <p class="upload-counter" id="uploadCounter">0 / 0</p>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

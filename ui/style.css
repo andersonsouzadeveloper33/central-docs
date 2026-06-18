@@ -374,3 +374,87 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 .detail-btn.share:hover { background: #eff6ff; }
 .detail-btn.delete { color: #ef4444; border-color: #fecaca; }
 .detail-btn.delete:hover { background: #fef2f2; }
+
+/* ── Dropdown Novo ────────────────────────────────────────────── */
+.btn-new-group { position: relative; }
+.new-dropdown {
+  display: none; position: absolute; top: calc(100% + 6px); left: 0;
+  background: var(--white); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.10);
+  min-width: 180px; z-index: 100; overflow: hidden;
+}
+.new-dropdown.open { display: block; }
+.new-dd-item {
+  width: 100%; padding: 11px 16px; border: none; background: transparent;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13.5px; color: var(--text); cursor: pointer; text-align: left;
+  transition: background .12s;
+}
+.new-dd-item svg { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; }
+.new-dd-item:hover { background: var(--bg); }
+
+/* ── Modal ────────────────────────────────────────────────────── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(15,23,41,.45); backdrop-filter: blur(2px);
+  z-index: 200; align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: var(--white); border-radius: 14px;
+  width: 420px; box-shadow: 0 20px 60px rgba(0,0,0,.18);
+  overflow: hidden;
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px 0;
+}
+.modal-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.modal-close {
+  width: 28px; height: 28px; border: none; background: transparent;
+  font-size: 14px; color: var(--text-muted); cursor: pointer; border-radius: 6px;
+  transition: background .12s;
+}
+.modal-close:hover { background: var(--bg); }
+.modal-body { padding: 18px 24px; }
+.modal-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .4px; }
+.modal-input {
+  width: 100%; padding: 10px 14px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; color: var(--text); outline: none;
+  transition: border-color .15s;
+}
+.modal-input:focus { border-color: var(--blue); }
+.modal-error { font-size: 12px; color: #ef4444; margin-top: 6px; min-height: 16px; }
+.modal-footer {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 0 24px 20px;
+}
+.modal-btn {
+  padding: 9px 20px; border-radius: 8px; font-size: 13.5px;
+  font-weight: 600; cursor: pointer; border: 1px solid transparent;
+  transition: background .15s;
+}
+.modal-btn.cancel { background: var(--bg); border-color: var(--border); color: var(--text-muted); }
+.modal-btn.cancel:hover { background: #e2e8f0; }
+.modal-btn.confirm { background: var(--blue); color: #fff; }
+.modal-btn.confirm:hover { background: var(--blue-dark); }
+.modal-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Upload progress ──────────────────────────────────────────── */
+.upload-filename { font-size: 13.5px; color: var(--text); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.upload-bar-wrap { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }
+.upload-bar-fill { height: 100%; background: var(--blue); border-radius: 99px; transition: width .2s; }
+.upload-counter { font-size: 12px; color: var(--text-muted); text-align: right; }
+
+/* ── Toast ────────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: #1e293b; color: #fff; padding: 11px 22px;
+  border-radius: 10px; font-size: 13.5px; font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2);
+  opacity: 0; transition: opacity .22s, transform .22s; z-index: 999;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.toast-warn { background: #92400e; }
+.toast.toast-error { background: #7f1d1d; }

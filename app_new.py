@@ -28,6 +28,13 @@ if not TENANT_ID:
         with open(_cfg_path, encoding="utf-8") as _f:
             TENANT_ID = _json.load(_f).get("tenant_id", "")
 
+# ── Cloudflare R2 ────────────────────────────────────────────────────────────
+CF_ACCOUNT_ID = "0527279a58ca34c6f7759899a64d07e3"
+CF_ACCESS_KEY = "7a3ac7882e63a79d2192d547e7b03f1d"
+CF_SECRET_KEY = "17f05bbe4c37afe9dfbb368fce4cf74af7e219ea65c5183607b6f241015e6656"
+CF_BUCKET     = "centraldocs"
+CF_ENDPOINT   = f"https://{CF_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
 # ── Utilitários ──────────────────────────────────────────────────────────────
 def _ui_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -275,16 +282,11 @@ class Api:
         # envia ao R2
         import boto3
         from botocore.config import Config
-        CF_ACCOUNT  = _os.environ.get("CF_ACCOUNT_ID", "")
-        CF_KEY_ID   = _os.environ.get("CF_ACCESS_KEY_ID", "")
-        CF_SECRET   = _os.environ.get("CF_SECRET_ACCESS_KEY", "")
-        CF_BUCKET   = _os.environ.get("CF_BUCKET", "")
-
         s3 = boto3.client(
             "s3",
-            endpoint_url=f"https://{CF_ACCOUNT}.r2.cloudflarestorage.com",
-            aws_access_key_id=CF_KEY_ID,
-            aws_secret_access_key=CF_SECRET,
+            endpoint_url=CF_ENDPOINT,
+            aws_access_key_id=CF_ACCESS_KEY,
+            aws_secret_access_key=CF_SECRET_KEY,
             config=Config(signature_version="s3v4"),
             region_name="auto",
         )
@@ -300,6 +302,57 @@ class Api:
             "size":         len(data),
         }).execute()
         return {"ok": True}
+
+    # ── abrir arquivo (baixa do R2 e abre com programa padrão) ─────────────
+    def open_file(self, storage_path: str, filename: str):
+        import boto3, tempfile
+        from botocore.config import Config
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=CF_ENDPOINT,
+                aws_access_key_id=CF_ACCESS_KEY,
+                aws_secret_access_key=CF_SECRET_KEY,
+                config=Config(signature_version="s3v4"),
+                region_name="auto",
+            )
+            r2_key = f"{TENANT_ID}/{storage_path}"
+            ext    = os.path.splitext(filename)[1]
+            tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=ext,
+                                                 prefix="zynor_", dir=tempfile.gettempdir())
+            s3.download_fileobj(CF_BUCKET, r2_key, tmp)
+            tmp.close()
+            os.startfile(tmp.name)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    # ── excluir pasta ou arquivo ─────────────────────────────────────────────
+    def delete_item(self, item_type: str, item_id: str, storage_path: str):
+        try:
+            if item_type == "folder":
+                # remove subpastas e arquivos recursivamente
+                all_folders = (sb.table("folders")
+                                 .select("id, storage_path")
+                                 .eq("tenant_id", TENANT_ID)
+                                 .execute()).data or []
+                all_files = (sb.table("files")
+                               .select("id, storage_path")
+                               .eq("tenant_id", TENANT_ID)
+                               .execute()).data or []
+                prefix = storage_path.rstrip("/") + "/"
+                for f in all_files:
+                    if f["storage_path"].startswith(prefix) or f["storage_path"] == storage_path:
+                        sb.table("files").delete().eq("id", f["id"]).execute()
+                for f in all_folders:
+                    if f["storage_path"].startswith(prefix):
+                        sb.table("folders").delete().eq("id", f["id"]).execute()
+                sb.table("folders").delete().eq("id", item_id).execute()
+            else:
+                sb.table("files").delete().eq("id", item_id).execute()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def ping(self):
         return {"ok": True}

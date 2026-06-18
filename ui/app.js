@@ -591,7 +591,6 @@ function initNewDropdown() {
 let modalMode = "folder";
 
 function openModal(mode) {
-  if (!state.currentPath) return showToast("Selecione uma pasta primeiro.", "warn");
   modalMode = mode;
   document.getElementById("modalTitle").textContent = mode === "folder" ? "Nova pasta" : "Novo arquivo";
   document.getElementById("modalLabel").textContent = mode === "folder" ? "Nome da pasta" : "Nome do arquivo";
@@ -615,15 +614,23 @@ async function confirmModal() {
   btn.textContent = "Criando...";
   errEl.textContent = "";
 
+  const parentPath = state.currentPath ?? "";
   try {
     if (modalMode === "folder") {
-      await api().create_folder(name, state.currentPath);
+      await api().create_folder(name, parentPath);
     } else {
-      await api().create_file(name, state.currentPath);
+      await api().create_file(name, parentPath);
     }
     closeModal();
-    await loadGrid(state.currentPath);
-    await loadStats(state.currentPath);
+    if (parentPath === "") {
+      // estamos na home — recarrega a grid de pastas raiz
+      const folders = await api().get_root_folders();
+      loadHomeGrid(folders);
+      await loadSidebar();
+    } else {
+      await loadGrid(parentPath);
+      await loadStats(parentPath);
+    }
     showToast(`"${name}" criado com sucesso!`);
   } catch(e) {
     errEl.textContent = `Erro: ${e}`;

@@ -1193,15 +1193,15 @@ class App(ctk.CTk):
         body.pack(fill="both", expand=True)
 
         # ── Sidebar ───────────────────────────────────────────────────────────
-        self._sidebar = ctk.CTkFrame(body, fg_color="#1A2332", corner_radius=0, width=240)
+        self._sidebar = tk.Frame(body, bg="#1A2332", width=240)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
 
-        ctk.CTkLabel(self._sidebar, text="Zynor Docs",
-                     font=ctk.CTkFont("Segoe UI", 16, weight="bold"),
-                     text_color="#FFFFFF").pack(fill="x", padx=20, pady=(24, 4))
-        ctk.CTkFrame(self._sidebar, fg_color="#2E3F52", height=1,
-                     corner_radius=0).pack(fill="x", padx=16, pady=4)
+        SB = "#1A2332"  # cor de fundo da sidebar
+
+        tk.Label(self._sidebar, text="Zynor Docs", bg=SB, fg="#FFFFFF",
+                 font=("Segoe UI", 16, "bold")).pack(fill="x", padx=20, pady=(24, 4))
+        tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=4)
 
         nav_items = [
             ("  📄  Documentos",    "documentos"),
@@ -1211,31 +1211,29 @@ class App(ctk.CTk):
         self._nav_btns = {}
         for label, key in nav_items:
             btn = ctk.CTkButton(self._sidebar, text=label, anchor="w",
-                                fg_color="transparent", text_color="#9AAEC1",
-                                hover_color="#263549", corner_radius=6, height=40,
+                                fg_color="transparent", bg_color=SB,
+                                text_color="#9AAEC1", hover_color="#263549",
+                                corner_radius=6, height=40,
                                 font=ctk.CTkFont("Segoe UI", 12),
                                 command=lambda k=key: self._nav_go(k))
             btn.pack(fill="x", padx=10, pady=1)
             self._nav_btns[key] = btn
-        # manter compatibilidade com código que usa _nav_labels
         self._nav_labels = self._nav_btns
 
-        ctk.CTkFrame(self._sidebar, fg_color="#2E3F52", height=1,
-                     corner_radius=0).pack(fill="x", padx=16, pady=(16, 4))
+        tk.Frame(self._sidebar, bg="#2E3F52", height=1).pack(fill="x", padx=16, pady=(16, 4))
 
-        folders_header = ctk.CTkFrame(self._sidebar, fg_color="transparent")
+        folders_header = tk.Frame(self._sidebar, bg=SB)
         folders_header.pack(fill="x", padx=16, pady=(4, 4))
-        ctk.CTkLabel(folders_header, text="MINHAS PASTAS",
-                     font=ctk.CTkFont("Segoe UI", 9, weight="bold"),
-                     text_color="#6B8099").pack(side="left")
+        tk.Label(folders_header, text="MINHAS PASTAS", bg=SB, fg="#6B8099",
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
         add_btn = ctk.CTkButton(folders_header, text="＋", width=28, height=24,
-                                fg_color="transparent", text_color="#9AAEC1",
-                                hover_color="#263549", corner_radius=4,
-                                font=ctk.CTkFont("Segoe UI", 14),
+                                fg_color="transparent", bg_color=SB,
+                                text_color="#9AAEC1", hover_color="#263549",
+                                corner_radius=4, font=ctk.CTkFont("Segoe UI", 14),
                                 command=self._open_new_folder_dialog)
         add_btn.pack(side="right")
 
-        self._folders_list = ctk.CTkFrame(self._sidebar, fg_color="transparent")
+        self._folders_list = tk.Frame(self._sidebar, bg=SB)
         self._folders_list.pack(fill="x")
 
         # ── Main ──────────────────────────────────────────────────────────────
@@ -1307,9 +1305,9 @@ class App(ctk.CTk):
         self._search_var.trace_add("write", self._on_search_change)
         ctk.CTkEntry(search_frame, textvariable=self._search_var,
                      placeholder_text="Buscar arquivos e pastas...",
-                     fg_color="transparent", border_width=0,
-                     text_color="#1E2A3A", height=38,
-                     font=ctk.CTkFont("Segoe UI", 12)).pack(
+                     fg_color=("#FFFFFF", "#FFFFFF"), border_width=0,
+                     text_color="#1E2A3A", placeholder_text_color="#9AAEC1",
+                     height=38, font=ctk.CTkFont("Segoe UI", 12)).pack(
                      side="left", fill="x", expand=True, padx=(0, 8))
         clr_btn = ctk.CTkButton(search_frame, text="✕", width=32, height=32,
                                 fg_color="transparent", text_color="#9AAEC1",
@@ -2477,8 +2475,9 @@ class App(ctk.CTk):
     def _add_folder_to_sidebar(self, folder: dict):
         btn = ctk.CTkButton(self._folders_list,
                             text=f"  📁  {folder['name']}", anchor="w",
-                            fg_color="transparent", text_color="#C5D5E8",
-                            hover_color="#263549", corner_radius=6, height=36,
+                            fg_color="transparent", bg_color="#1A2332",
+                            text_color="#C5D5E8", hover_color="#263549",
+                            corner_radius=6, height=36,
                             font=ctk.CTkFont("Segoe UI", 11),
                             command=lambda p=folder["storage_path"]: self._select_root(p))
         btn.pack(fill="x", padx=10, pady=1)

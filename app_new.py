@@ -52,6 +52,18 @@ class Api:
                  .execute())
         return res.data or []
 
+    # ── subpastas de um caminho (sidebar) ───────────────────────────────────
+    def get_subfolders(self, parent_path: str):
+        if not TENANT_ID:
+            return []
+        res = (sb.table("folders")
+                 .select("id, name, storage_path, parent_path")
+                 .eq("tenant_id", TENANT_ID)
+                 .eq("parent_path", parent_path)
+                 .order("name")
+                 .execute())
+        return res.data or []
+
     # ── conteúdo de um caminho (pastas + arquivos) ───────────────────────────
     def get_children(self, storage_path: str):
         if not TENANT_ID:
@@ -63,20 +75,20 @@ class Api:
                      .order("name")
                      .execute()).data or []
         files   = (sb.table("files")
-                     .select("id, name, storage_path, size, created_at, updated_at")
+                     .select("id, name, storage_path, size, created_at")
                      .eq("tenant_id", TENANT_ID)
-                     .eq("folder_path", storage_path)
+                     .eq("parent_path", storage_path)
                      .order("name")
                      .execute()).data or []
 
         result = [{"type": "folder", **f} for f in folders]
         result += [{
-            "type":       "file",
-            "id":         f["id"],
-            "name":       f["name"],
+            "type":         "file",
+            "id":           f["id"],
+            "name":         f["name"],
             "storage_path": f["storage_path"],
-            "size":       _fmt_size(f.get("size")),
-            "updated_at": f.get("updated_at") or f.get("created_at") or "",
+            "size":         _fmt_size(f.get("size")),
+            "updated_at":   f.get("created_at") or "",
         } for f in files]
         return result
 
@@ -87,7 +99,7 @@ class Api:
         files = (sb.table("files")
                    .select("size")
                    .eq("tenant_id", TENANT_ID)
-                   .eq("folder_path", storage_path)
+                   .eq("parent_path", storage_path)
                    .execute()).data or []
         folders = (sb.table("folders")
                      .select("id")

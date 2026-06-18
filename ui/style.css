@@ -65,20 +65,46 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
   color: #475569;
   padding: 14px 22px 6px;
 }
-.folder-tree { padding: 0 10px; flex: 1; overflow-y: auto; }
-.folder-item {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 12px;
-  color: #94a3b8;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
+.folder-tree { padding: 0 6px; flex: 1; overflow-y: auto; }
+
+/* nó da árvore */
+.tree-node { display: flex; flex-direction: column; }
+.tree-children { display: flex; flex-direction: column; }
+
+.tree-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 10px 7px 12px;
+  border-radius: 8px; cursor: pointer;
+  color: #94a3b8; font-size: 13px;
   transition: background .15s, color .15s;
+  user-select: none;
 }
-.folder-item svg { width: 15px; height: 15px; flex-shrink: 0; }
-.folder-item:hover { background: rgba(255,255,255,.07); color: #e2e8f0; }
-.folder-item.active { background: rgba(59,130,246,.2); color: #93c5fd; }
-.folder-item.sub { padding-left: 30px; }
+.tree-row:hover { background: rgba(255,255,255,.07); color: #e2e8f0; }
+.tree-row.active { background: rgba(59,130,246,.25); color: #93c5fd; }
+.tree-row.active .tree-folder-icon svg { stroke: #93c5fd; }
+
+/* chevron */
+.tree-chevron {
+  width: 14px; height: 14px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .18s;
+  color: #475569;
+}
+.tree-chevron svg { width: 10px; height: 10px; }
+.tree-chevron.open { transform: rotate(90deg); }
+.tree-chevron.leaf { visibility: hidden; }
+
+/* ícone de pasta */
+.tree-folder-icon { width: 16px; height: 16px; flex-shrink: 0; display: flex; align-items: center; }
+.tree-folder-icon svg { width: 15px; height: 15px; }
+
+.tree-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* loading / empty na sidebar */
+.tree-loading, .tree-empty {
+  padding: 6px 14px; font-size: 11.5px; color: #475569;
+}
+.tree-loading.sub, .tree-empty.sub { padding-left: 28px; }
 
 /* Bottom */
 .sidebar-bottom { padding: 12px 16px 16px; border-top: 1px solid rgba(255,255,255,.06); }
@@ -247,19 +273,15 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 .file-table tbody td { padding: 12px 16px; font-size: 13.5px; color: var(--text); }
 
 .name-cell { display: flex; align-items: center; gap: 10px; }
-.folder-icon-sm {
-  width: 26px; height: 22px;
-  background: #fbbf24;
-  border-radius: 4px 4px 4px 0;
-  clip-path: polygon(0 30%, 35% 30%, 42% 0, 100% 0, 100% 100%, 0 100%);
-}
-.file-icon-sm {
-  width: 22px; height: 26px;
-  background: #e2e8f0;
-  border-radius: 3px;
-  position: relative;
-}
-.file-icon-sm.txt { background: #dbeafe; }
+
+/* ícones grid via SVG inline */
+.grid-icon { width: 24px; height: 24px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.grid-icon svg { width: 22px; height: 22px; }
+.grid-icon.file-ic svg { stroke: #64748b; }
+.grid-icon.file-ic.pdf svg { stroke: #ef4444; }
+.grid-icon.file-ic.doc svg { stroke: #3b82f6; }
+.grid-icon.file-ic.img svg { stroke: #22c55e; }
+.grid-icon.file-ic.xls svg { stroke: #16a34a; }
 
 .btn-more {
   width: 28px; height: 28px; border-radius: 6px;

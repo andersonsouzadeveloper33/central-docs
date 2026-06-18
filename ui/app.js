@@ -1,11 +1,12 @@
 // ── Estado global ────────────────────────────────────────────────────────────
 const state = {
-  currentPath: null,   // storage_path da pasta aberta
+  currentPath: null,
   currentName: "",
-  breadcrumb:  [],     // [{name, path}]
+  breadcrumb:  [],
+  expanded:    new Set(),   // paths de pastas expandidas na sidebar
 };
 
-// ── Aguarda pywebview ────────────────────────────────────────────────────────
+// ── pywebview ────────────────────────────────────────────────────────────────
 function pyReady() {
   return new Promise(resolve => {
     if (window.pywebview) return resolve();
@@ -25,86 +26,156 @@ async function init() {
 async function loadSession() {
   try {
     const s = await api().get_session();
-    if (s.user?.name) {
-      document.querySelectorAll(".user-name").forEach(el => el.textContent = s.user.name);
-      document.querySelectorAll(".user-top").forEach(el => {
-        const span = el.querySelector("span") || el;
-        // mantém apenas o nome no topbar
-      });
-      // Iniciais do avatar
-      const initials = s.user.name.split(" ").map(w => w[0]).slice(0,2).join("").toUpperCase();
-      document.querySelectorAll(".user-avatar").forEach(el => el.textContent = initials);
-      // Nome no topbar
-      const topName = document.querySelector(".user-top");
-      if (topName) {
-        topName.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = " " + s.user.name + " "; });
-      }
-    }
+    if (!s.user?.name) return;
+    const initials = s.user.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
+    document.querySelectorAll(".user-avatar").forEach(el => el.textContent = initials);
+    document.querySelectorAll(".user-name").forEach(el => el.textContent = s.user.name);
   } catch(e) { console.warn("sem sessão:", e); }
 }
 
-// ── Sidebar — pastas raiz ────────────────────────────────────────────────────
+// ── Sidebar ──────────────────────────────────────────────────────────────────
 async function loadSidebar() {
   const tree = document.getElementById("folderTree");
-  tree.innerHTML = '<div class="folder-item loading">Carregando...</div>';
+  tree.innerHTML = '<div class="tree-loading">Carregando...</div>';
   try {
     const folders = await api().get_root_folders();
     tree.innerHTML = "";
     if (!folders.length) {
-      tree.innerHTML = '<div class="folder-item muted">Nenhuma pasta</div>';
+      tree.innerHTML = '<div class="tree-empty">Nenhuma pasta</div>';
       return;
     }
-    folders.forEach(f => {
-      const el = document.createElement("div");
-      el.className = "folder-item";
-      el.dataset.path = f.storage_path;
-      el.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-        </svg>
-        <span>${f.name}</span>`;
-      el.addEventListener("click", () => openFolder(f.storage_path, f.name, []));
-      tree.appendChild(el);
-    });
+    folders.forEach(f => tree.appendChild(buildTreeNode(f, 0)));
   } catch(e) {
-    tree.innerHTML = '<div class="folder-item muted">Erro ao carregar</div>';
+    tree.innerHTML = `<div class="tree-empty">Erro ao carregar</div>`;
     console.error(e);
   }
 }
 
-// ── Abre pasta ───────────────────────────────────────────────────────────────
-async function openFolder(path, name, parentCrumbs) {
-  state.currentPath = path;
-  state.currentName = name;
-  state.breadcrumb  = [...parentCrumbs, { name, path }];
+function buildTreeNode(folder, depth) {
+  const wrap = document.createElement("div");
+  wrap.className = "tree-node";
+  wrap.dataset.path = folder.storage_path;
 
-  // Marca ativo na sidebar
-  document.querySelectorAll(".folder-item").forEach(el => {
-    el.classList.toggle("active", el.dataset.path === path);
+  const row = document.createElement("div");
+  row.className = "tree-row";
+  row.style.paddingLeft = `${12 + depth * 14}px`;
+
+  // chevron (rotaciona ao expandir)
+  const chevron = document.createElement("span");
+  chevron.className = "tree-chevron";
+  chevron.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+  // ícone de pasta
+  const icon = document.createElement("span");
+  icon.className = "tree-folder-icon";
+  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+
+  const label = document.createElement("span");
+  label.className = "tree-label";
+  label.textContent = folder.name;
+
+  row.appendChild(chevron);
+  row.appendChild(icon);
+  row.appendChild(label);
+  wrap.appendChild(row);
+
+  // container de filhos (começa fechado)
+  const children = document.createElement("div");
+  children.className = "tree-children";
+  wrap.appendChild(children);
+
+  // clique no chevron → expande/colapsa
+  chevron.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await toggleNode(wrap, folder, depth);
   });
 
+  // clique na linha → abre a pasta no grid
+  row.addEventListener("click", async () => {
+    await selectNode(wrap, folder);
+    // se ainda não expandido, expande também
+    if (!state.expanded.has(folder.storage_path)) {
+      await toggleNode(wrap, folder, depth);
+    }
+  });
+
+  return wrap;
+}
+
+async function toggleNode(wrap, folder, depth) {
+  const children = wrap.querySelector(".tree-children");
+  const chevron  = wrap.querySelector(".tree-chevron");
+  const path     = folder.storage_path;
+
+  if (state.expanded.has(path)) {
+    // colapsa
+    state.expanded.delete(path);
+    chevron.classList.remove("open");
+    children.innerHTML = "";
+  } else {
+    // expande — carrega subpastas
+    state.expanded.add(path);
+    chevron.classList.add("open");
+    children.innerHTML = '<div class="tree-loading sub">Carregando...</div>';
+    try {
+      const subs = await api().get_subfolders(path);
+      children.innerHTML = "";
+      if (subs.length) {
+        subs.forEach(sub => children.appendChild(buildTreeNode(sub, depth + 1)));
+      } else {
+        chevron.classList.add("leaf"); // sem filhos
+      }
+    } catch(e) {
+      children.innerHTML = '<div class="tree-empty sub">Erro</div>';
+    }
+  }
+}
+
+async function selectNode(wrap, folder) {
+  // remove seleção anterior
+  document.querySelectorAll(".tree-row.active").forEach(r => r.classList.remove("active"));
+  wrap.querySelector(".tree-row").classList.add("active");
+
+  const crumbs = buildCrumbs(folder.storage_path, folder.name);
+  state.currentPath = folder.storage_path;
+  state.currentName = folder.name;
+  state.breadcrumb  = crumbs;
+
   updateBreadcrumb();
-  updateFolderTitle(name);
-  await loadGrid(path);
-  await loadStats(path);
+  updateFolderTitle(folder.name);
+  await loadGrid(folder.storage_path);
+  await loadStats(folder.storage_path);
+}
+
+// monta breadcrumb a partir do storage_path (ex: "projetos/zelar")
+function buildCrumbs(storagePath, name) {
+  const parts = storagePath.split("/").filter(Boolean);
+  // usa o nome real só no último nível — os intermediários usam o próprio segmento
+  return parts.map((seg, i) => ({
+    name: i === parts.length - 1 ? name : seg,
+    path: parts.slice(0, i + 1).join("/"),
+  }));
 }
 
 // ── Breadcrumb ───────────────────────────────────────────────────────────────
 function updateBreadcrumb() {
-  const bc = document.querySelector(".breadcrumb");
+  const bc     = document.querySelector(".breadcrumb");
   const crumbs = [{ name: "Início", path: null }, ...state.breadcrumb];
-  bc.innerHTML = crumbs.map((c, i) => {
+  bc.innerHTML  = crumbs.map((c, i) => {
     const isLast = i === crumbs.length - 1;
     if (isLast) return `<strong>${c.name}</strong>`;
-    return `<a href="#" data-path="${c.path}" data-name="${c.name}">${c.name}</a><span class="sep">›</span>`;
+    return `<a href="#" data-path="${c.path ?? ""}" data-name="${c.name}">${c.name}</a><span class="sep">›</span>`;
   }).join("");
 
   bc.querySelectorAll("a[data-path]").forEach(a => {
     a.addEventListener("click", e => {
       e.preventDefault();
-      const idx = state.breadcrumb.findIndex(c => c.path === a.dataset.path);
-      const parent = idx > 0 ? state.breadcrumb.slice(0, idx) : [];
-      openFolder(a.dataset.path, a.dataset.name, parent);
+      // navega de volta — seleciona o nó da sidebar se existir
+      const node = document.querySelector(`.tree-node[data-path="${a.dataset.path}"]`);
+      if (node) {
+        const folder = { storage_path: a.dataset.path, name: a.dataset.name };
+        selectNode(node, folder);
+      }
     });
   });
 }
@@ -114,7 +185,7 @@ function updateFolderTitle(name) {
   if (h1) h1.textContent = name;
 }
 
-// ── Grid de arquivos/pastas ───────────────────────────────────────────────────
+// ── Grid ─────────────────────────────────────────────────────────────────────
 async function loadGrid(path) {
   const tbody = document.getElementById("fileList");
   tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Carregando...</td></tr>';
@@ -126,13 +197,13 @@ async function loadGrid(path) {
     }
     tbody.innerHTML = items.map(item => {
       const icon = item.type === "folder"
-        ? `<div class="folder-icon-sm"></div>`
-        : `<div class="file-icon-sm ${fileExt(item.name)}"></div>`;
+        ? `<span class="grid-icon folder-ic"><svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1.2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>`
+        : `<span class="grid-icon file-ic ${fileExt(item.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>`;
       const size = item.type === "folder" ? "—" : (item.size || "—");
       const date = item.updated_at ? fmtDate(item.updated_at) : "—";
       return `
         <tr class="item-row" data-type="${item.type}" data-path="${item.storage_path}" data-name="${item.name}">
-          <td class="name-cell">${icon} ${item.name}</td>
+          <td class="name-cell">${icon}<span>${item.name}</span></td>
           <td>${item.type === "folder" ? "Pasta" : extLabel(item.name)}</td>
           <td>${size}</td>
           <td>${date}</td>
@@ -140,10 +211,18 @@ async function loadGrid(path) {
         </tr>`;
     }).join("");
 
-    // Clique em pasta → navega
     tbody.querySelectorAll(".item-row[data-type='folder']").forEach(row => {
-      row.addEventListener("dblclick", () => {
-        openFolder(row.dataset.path, row.dataset.name, state.breadcrumb);
+      row.addEventListener("dblclick", async () => {
+        const folder = { storage_path: row.dataset.path, name: row.dataset.name };
+        // tenta encontrar o nó na sidebar para selecioná-lo visualmente
+        let node = document.querySelector(`.tree-node[data-path="${row.dataset.path}"]`);
+        if (!node) {
+          // cria nó temporário sem inserir na sidebar para não duplicar
+          node = document.createElement("div");
+          node.dataset.path = row.dataset.path;
+          node.appendChild(document.createElement("div")).className = "tree-row";
+        }
+        await selectNode(node, folder);
       });
       row.addEventListener("click", () => {
         tbody.querySelectorAll(".item-row").forEach(r => r.classList.remove("selected"));
@@ -151,16 +230,14 @@ async function loadGrid(path) {
       });
     });
 
-    // Atualiza rodapé
     const footer = document.querySelector(".file-list-footer");
     if (footer) footer.textContent = `${items.length} ${items.length === 1 ? "item" : "itens"}`;
-
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">Erro: ${e}</td></tr>`;
   }
 }
 
-// ── Stats cards ───────────────────────────────────────────────────────────────
+// ── Stats ─────────────────────────────────────────────────────────────────────
 async function loadStats(path) {
   try {
     const s = await api().get_folder_stats(path);
@@ -174,37 +251,35 @@ function setStatVal(idx, val) {
   if (cards[idx]) cards[idx].textContent = val;
 }
 
+// ── Search ────────────────────────────────────────────────────────────────────
+function initSearch() {
+  const input = document.querySelector(".search-box input");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const q = input.value.toLowerCase();
+    document.querySelectorAll(".item-row").forEach(row => {
+      row.style.display = row.dataset.name.toLowerCase().includes(q) ? "" : "none";
+    });
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fileExt(name) {
   const ext = name.split(".").pop().toLowerCase();
-  const map = { pdf: "pdf", txt: "txt", doc: "doc", docx: "doc",
-                png: "img", jpg: "img", jpeg: "img", xlsx: "xls", xls: "xls" };
+  const map = { pdf:"pdf", txt:"txt", doc:"doc", docx:"doc",
+                png:"img", jpg:"img", jpeg:"img", xlsx:"xls", xls:"xls" };
   return map[ext] || "generic";
 }
 function extLabel(name) {
-  const ext = name.split(".").pop().toUpperCase();
-  return ext || "Arquivo";
+  return name.split(".").pop().toUpperCase() || "Arquivo";
 }
 function fmtDate(iso) {
-  if (!iso) return "—";
   try {
     return new Date(iso).toLocaleString("pt-BR", {
-      day: "2-digit", month: "2-digit", year: "numeric",
-      hour: "2-digit", minute: "2-digit"
+      day:"2-digit", month:"2-digit", year:"numeric",
+      hour:"2-digit", minute:"2-digit"
     });
   } catch { return iso; }
 }
 
-// ── Search ────────────────────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => {
-  const searchInput = document.querySelector(".search-box input");
-  if (searchInput) {
-    searchInput.addEventListener("input", () => {
-      const q = searchInput.value.toLowerCase();
-      document.querySelectorAll(".item-row").forEach(row => {
-        row.style.display = row.dataset.name.toLowerCase().includes(q) ? "" : "none";
-      });
-    });
-  }
-  init();
-});
+document.addEventListener("DOMContentLoaded", () => { initSearch(); init(); });

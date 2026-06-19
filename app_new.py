@@ -753,6 +753,29 @@ class Api:
         except Exception:
             return []
 
+    def get_notifications(self, limit: int = 15) -> list:
+        """Últimas ações no tenant para o sino de notificações."""
+        try:
+            res = (sb.table("audit_log")
+                     .select("action, target_type, target_name, user_name, created_at")
+                     .eq("tenant_id", TENANT_ID)
+                     .order("created_at", desc=True)
+                     .limit(limit)
+                     .execute())
+            return res.data or []
+        except Exception:
+            return []
+
+    def logout(self) -> dict:
+        """Limpa sessão do usuário atual."""
+        global CURRENT_USER
+        try:
+            self.unlock_all()
+        except Exception:
+            pass
+        CURRENT_USER = {}
+        return {"ok": True}
+
     def get_item_activity(self, target_name: str) -> list:
         """Retorna histórico de atividades de um arquivo ou pasta específico."""
         try:

@@ -107,20 +107,41 @@
       <div class="sidebar-bottom">
         <div class="storage-label">
           <span>Armazenamento</span>
-          <span class="storage-used">12,4 GB de 100 GB</span>
+          <span class="storage-used" id="storageUsedLabel">—</span>
         </div>
         <div class="storage-bar">
-          <div class="storage-fill" style="width: 12.4%"></div>
+          <div class="storage-fill" id="storageFill" style="width: 0%"></div>
         </div>
-        <button class="btn-manage-plan">Gerenciar planos</button>
+        <button class="btn-manage-plan" id="btnManagePlan">Gerenciar planos</button>
 
-        <div class="user-card">
-          <div class="user-avatar">AS</div>
+        <div class="user-card" id="userCard">
+          <div class="user-avatar" id="userAvatarSide">AS</div>
           <div class="user-info">
-            <span class="user-name">Anderson Souza</span>
-            <span class="user-role">Administrador</span>
+            <span class="user-name" id="userNameSide">Anderson Souza</span>
+            <span class="user-role" id="userRoleSide">Administrador</span>
           </div>
           <svg class="user-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+
+        <!-- Dropdown do usuário -->
+        <div class="user-dropdown" id="userDropdown" style="display:none">
+          <div class="user-dd-header">
+            <div class="user-avatar" id="userAvatarDd">AS</div>
+            <div>
+              <div class="user-dd-name" id="userNameDd">Anderson Souza</div>
+              <div class="user-dd-email" id="userEmailDd">—</div>
+            </div>
+          </div>
+          <div class="user-dd-sep"></div>
+          <button class="user-dd-item" id="btnChangePw">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Trocar senha
+          </button>
+          <div class="user-dd-sep"></div>
+          <button class="user-dd-item danger" id="btnLogout">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Sair
+          </button>
         </div>
       </div>
     </aside>
@@ -134,9 +155,19 @@
           <strong>Início</strong>
         </nav>
         <div class="topbar-actions">
-          <button class="btn-icon notif" title="Notificações">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-          </button>
+          <!-- Sino de notificações -->
+          <div class="notif-wrap" id="notifWrap">
+            <button class="btn-icon notif" id="btnNotif" title="Notificações">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              <span class="notif-badge" id="notifBadge" style="display:none"></span>
+            </button>
+            <div class="notif-dropdown" id="notifDropdown" style="display:none">
+              <div class="notif-header">Notificações</div>
+              <div id="notifList"><p class="notif-empty">Nenhuma atividade recente.</p></div>
+            </div>
+          </div>
+
+          <!-- Menu usuário (topbar) -->
           <div class="user-top" id="userTopbar">
             <div class="user-avatar-sm" id="userAvatarTop">AS</div>
             <span class="user-name" id="userNameTop">Anderson Souza</span>
@@ -522,6 +553,45 @@
       <div class="modal-footer">
         <button class="modal-btn cancel" id="confirmCancelBtn">Cancelar</button>
         <button class="modal-btn danger" id="confirmOkBtn">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: planos -->
+  <div class="modal-overlay" id="planOverlay" style="display:none">
+    <div class="modal plan-modal">
+      <div class="modal-header">
+        <span class="modal-title">Plano atual</span>
+        <button class="modal-close" id="planClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="plan-badge" id="planBadge">Plano Profissional</div>
+        <div class="plan-stats">
+          <div class="plan-stat">
+            <span class="plan-stat-val" id="planFiles">—</span>
+            <span class="plan-stat-lbl">Arquivos</span>
+          </div>
+          <div class="plan-stat">
+            <span class="plan-stat-val" id="planFolders">—</span>
+            <span class="plan-stat-lbl">Pastas</span>
+          </div>
+          <div class="plan-stat">
+            <span class="plan-stat-val" id="planSize">—</span>
+            <span class="plan-stat-lbl">Usado</span>
+          </div>
+        </div>
+        <div class="plan-storage-row">
+          <div class="plan-storage-label">
+            <span>Armazenamento</span>
+            <span id="planStorageDetail">— de 100 GB</span>
+          </div>
+          <div class="storage-bar" style="margin-bottom:0">
+            <div class="storage-fill" id="planStorageFill" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="planCloseBtn">Fechar</button>
       </div>
     </div>
   </div>

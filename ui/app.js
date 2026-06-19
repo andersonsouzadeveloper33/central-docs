@@ -262,6 +262,10 @@ async function loadSession() {
     const nt = document.getElementById("userNameTop");
     if (at) at.textContent = initials;
     if (nt) nt.textContent = s.user.name;
+    // atualiza dropdown sidebar e barra de armazenamento
+    updateUserMenu(s);
+    updateStorageBar();
+    checkNotifBadge();
   } catch(e) { console.warn("sem sessão:", e); }
 }
 
@@ -1030,6 +1034,169 @@ function showToast(msg, type = "ok") {
   toast._t = setTimeout(() => toast.classList.remove("show"), 3000);
 }
 
+// ── Notificações ─────────────────────────────────────────────────────────────
+function initNotifications() {
+  const btn      = document.getElementById("btnNotif");
+  const dropdown = document.getElementById("notifDropdown");
+  const badge    = document.getElementById("notifBadge");
+  if (!btn) return;
+
+  btn.addEventListener("click", async e => {
+    e.stopPropagation();
+    const isOpen = dropdown.style.display !== "none";
+    dropdown.style.display = isOpen ? "none" : "block";
+    if (!isOpen) {
+      badge.style.display = "none";
+      await loadNotifications();
+    }
+  });
+  document.addEventListener("click", () => { dropdown.style.display = "none"; });
+}
+
+async function loadNotifications() {
+  const list = document.getElementById("notifList");
+  list.innerHTML = '<p class="notif-empty">Carregando...</p>';
+  const items = await api().get_notifications(15).catch(() => []);
+  if (!items.length) {
+    list.innerHTML = '<p class="notif-empty">Nenhuma atividade recente.</p>';
+    return;
+  }
+  list.innerHTML = items.map(n => {
+    const actionMap = {
+      "abriu": "abriu", "criou": "criou", "fez upload": "enviou",
+      "excluiu": "excluiu", "renomeou": "renomeou", "compartilhou": "compartilhou",
+    };
+    const verb = actionMap[n.action] || n.action;
+    return `
+      <div class="notif-item">
+        <div class="notif-dot"></div>
+        <div class="notif-text">
+          <strong>${n.user_name}</strong> ${verb}
+          <em>${n.target_name || ""}</em>
+        </div>
+        <span class="notif-time">${fmtDate(n.created_at)}</span>
+      </div>`;
+  }).join("");
+}
+
+// Mostra badge se houver atividade recente
+async function checkNotifBadge() {
+  const badge = document.getElementById("notifBadge");
+  if (!badge) return;
+  const items = await api().get_notifications(1).catch(() => []);
+  badge.style.display = items.length ? "inline-block" : "none";
+}
+
+// ── Menu de usuário (sidebar) ────────────────────────────────────────────────
+function initUserMenu() {
+  const card     = document.getElementById("userCard");
+  const dropdown = document.getElementById("userDropdown");
+  if (!card) return;
+
+  card.addEventListener("click", e => {
+    e.stopPropagation();
+    const isOpen = dropdown.style.display !== "none";
+    dropdown.style.display = isOpen ? "none" : "block";
+  });
+  document.addEventListener("click", () => { if (dropdown) dropdown.style.display = "none"; });
+
+  // Trocar senha — reutiliza a tela de change password
+  document.getElementById("btnChangePw")?.addEventListener("click", () => {
+    dropdown.style.display = "none";
+    document.getElementById("appShell").style.display        = "none";
+    document.getElementById("changePwScreen").style.display  = "flex";
+    document.getElementById("newPw1").focus();
+  });
+
+  // Sair
+  document.getElementById("btnLogout")?.addEventListener("click", async () => {
+    dropdown.style.display = "none";
+    const ok = await showConfirm("Deseja sair do sistema?", { title: "Sair", okLabel: "Sair", danger: false });
+    if (!ok) return;
+    await api().logout().catch(() => {});
+    document.getElementById("appShell").style.display    = "none";
+    document.getElementById("loginScreen").style.display = "flex";
+    document.getElementById("loginEmail").focus();
+    // limpa estado
+    state.currentPath = null;
+    state.navStack    = [];
+    state.breadcrumb  = [];
+  });
+}
+
+// Actualiza dados de usuário no dropdown da sidebar
+function updateUserMenu(session) {
+  if (!session?.user) return;
+  const u = session.user;
+  const initials = u.name?.split(" ").map(w => w[0]).slice(0,2).join("").toUpperCase() || "?";
+  const roleMap  = { admin: "Administrador", user: "Usuário" };
+
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt("userAvatarSide", initials);
+  setTxt("userNameSide",   u.name  || "");
+  setTxt("userRoleSide",   roleMap[u.role] || u.role || "");
+  setTxt("userAvatarDd",   initials);
+  setTxt("userNameDd",     u.name  || "");
+  setTxt("userEmailDd",    u.email || "");
+}
+
+// ── Armazenamento real na sidebar ────────────────────────────────────────────
+const PLAN_LIMIT_GB = 100;
+
+async function updateStorageBar() {
+  try {
+    const stats  = await api().get_tenant_stats();
+    const usedRaw = stats.total_size || "0 B";
+    // converte para GB para calcular %
+    const toBytes = s => {
+      const [n, u] = s.split(" ");
+      const m = { B:1, KB:1024, MB:1024**2, GB:1024**3, TB:1024**4 };
+      return parseFloat(n) * (m[u] || 1);
+    };
+    const usedBytes = toBytes(usedRaw);
+    const limitBytes = PLAN_LIMIT_GB * 1024 ** 3;
+    const pct = Math.min((usedBytes / limitBytes) * 100, 100).toFixed(1);
+
+    const label = document.getElementById("storageUsedLabel");
+    const fill  = document.getElementById("storageFill");
+    if (label) label.textContent = `${usedRaw} de ${PLAN_LIMIT_GB} GB`;
+    if (fill)  fill.style.width  = `${pct}%`;
+  } catch(e) { /* silencioso */ }
+}
+
+// ── Modal de planos ───────────────────────────────────────────────────────────
+function initPlanModal() {
+  const openModal = async () => {
+    const overlay = document.getElementById("planOverlay");
+    overlay.style.display = "flex";
+    try {
+      const stats = await api().get_tenant_stats();
+      const toBytes = s => {
+        const [n, u] = (s || "0 B").split(" ");
+        const m = { B:1, KB:1024, MB:1024**2, GB:1024**3, TB:1024**4 };
+        return parseFloat(n) * (m[u] || 1);
+      };
+      const usedBytes = toBytes(stats.total_size);
+      const limitBytes = PLAN_LIMIT_GB * 1024 ** 3;
+      const pct = Math.min((usedBytes / limitBytes) * 100, 100).toFixed(1);
+
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      set("planFiles",          stats.file_count   || 0);
+      set("planFolders",        stats.folder_count || 0);
+      set("planSize",           stats.total_size   || "0 B");
+      set("planStorageDetail",  `${stats.total_size || "0 B"} de ${PLAN_LIMIT_GB} GB`);
+      const fill = document.getElementById("planStorageFill");
+      if (fill) fill.style.width = `${pct}%`;
+    } catch(e) { /* silencioso */ }
+  };
+
+  document.getElementById("btnManagePlan")?.addEventListener("click", openModal);
+  const close = () => { document.getElementById("planOverlay").style.display = "none"; };
+  document.getElementById("planClose")?.addEventListener("click",    close);
+  document.getElementById("planCloseBtn")?.addEventListener("click", close);
+  document.getElementById("planOverlay")?.addEventListener("click",  e => { if (e.target.id === "planOverlay") close(); });
+}
+
 // ── Compartilhar ──────────────────────────────────────────────────────────────
 function initShare() {
   const overlay   = document.getElementById("shareOverlay");
@@ -1256,6 +1423,9 @@ document.addEventListener("DOMContentLoaded", () => {
   initModal();
   initUpload();
   initShare();
+  initNotifications();
+  initUserMenu();
+  initPlanModal();
 
   // nav clicks
   document.getElementById("navDocumentos")?.addEventListener("click", e => { e.preventDefault(); showHomeView(); });

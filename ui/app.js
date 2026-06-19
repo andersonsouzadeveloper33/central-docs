@@ -415,6 +415,7 @@ function updateFolderTitle(name) {
 
 // ── Renomear ──────────────────────────────────────────────────────────────────
 function startRename(item) {
+  modalMode = "rename";
   const label = item.type === "folder" ? "pasta" : "arquivo";
   document.getElementById("modalTitle").textContent   = `Renomear ${label}`;
   document.getElementById("modalLabel").textContent   = "Novo nome";
@@ -854,9 +855,11 @@ function openModal(mode) {
 
 function closeModal() {
   document.getElementById("modalOverlay").classList.remove("open");
+  if (modalMode === "rename") modalMode = "folder";
 }
 
 async function confirmModal() {
+  if (modalMode === "rename") return; // tratado pelo startRename
   const name = document.getElementById("modalInput").value.trim();
   const errEl = document.getElementById("modalError");
   if (!name) { errEl.textContent = "Digite um nome."; return; }

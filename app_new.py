@@ -206,12 +206,27 @@ class Api:
                 "must_change_password": user.get("must_change_password", False),
             }
             self._save_email_history(email)
+            # limpa locks de sessões anteriores deste usuário (app fechado sem unlock)
+            try:
+                sb.table("files").update({
+                    "locked_by": None, "locked_name": None, "locked_at": None,
+                }).eq("tenant_id", TENANT_ID).eq("locked_name", user["name"]).execute()
+            except Exception:
+                pass
             _audit("login")
             return {"ok": True, "must_change_password": user.get("must_change_password", False)}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
     def get_session(self) -> dict:
+        # ao iniciar sessão herdada do pai, limpa locks de sessões mortas deste usuário
+        if CURRENT_USER.get("name"):
+            try:
+                sb.table("files").update({
+                    "locked_by": None, "locked_name": None, "locked_at": None,
+                }).eq("tenant_id", TENANT_ID).eq("locked_name", CURRENT_USER["name"]).execute()
+            except Exception:
+                pass
         return {"tenant_id": TENANT_ID, "user": CURRENT_USER}
 
     def change_password(self, new_password: str) -> dict:

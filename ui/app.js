@@ -3,7 +3,8 @@ const state = {
   currentPath: null,
   currentName: "",
   breadcrumb:  [],
-  expanded:    new Set(),   // paths de pastas expandidas na sidebar
+  navStack:    [],   // [{name, storage_path}] — pilha exata de navegação, sem reconstrução de path
+  expanded:    new Set(),
 };
 
 // ── Diálogos customizados ─────────────────────────────────────────────────────
@@ -86,6 +87,7 @@ function showHomeView() {
   showView("homeView");
   state.currentPath = null;
   state.breadcrumb  = [];
+  state.navStack    = [];
   document.getElementById("breadcrumb").innerHTML = "<strong>Início</strong>";
   setActiveNav("navDocumentos");
 }
@@ -360,10 +362,20 @@ async function selectNode(wrap, folder) {
   const row = wrap.querySelector(".tree-row");
   if (row) row.classList.add("active");
 
-  const crumbs = buildCrumbs(folder.storage_path, folder.name);
+  // Mantém a pilha de navegação usando os storage_paths exatos do banco.
+  // Se a pasta já está na pilha (navegação para trás via breadcrumb), trunca até ela.
+  // Caso contrário, empurra como novo nível.
+  const existingIdx = state.navStack.findIndex(n => n.storage_path === folder.storage_path);
+  if (existingIdx >= 0) {
+    state.navStack = state.navStack.slice(0, existingIdx + 1);
+  } else {
+    state.navStack.push({ name: folder.name, storage_path: folder.storage_path });
+  }
+
   state.currentPath = folder.storage_path;
   state.currentName = folder.name;
-  state.breadcrumb  = crumbs;
+  // breadcrumb derivado direto da pilha — sem reconstrução por split de string
+  state.breadcrumb  = state.navStack.map(n => ({ name: n.name, path: n.storage_path }));
 
   updateBreadcrumb();
   updateFolderTitle(folder.name);
@@ -371,16 +383,6 @@ async function selectNode(wrap, folder) {
   await loadStats(folder.storage_path);
 }
 
-// monta breadcrumb a partir do storage_path, ocultando o tenant ID (1º segmento UUID)
-function buildCrumbs(storagePath, name) {
-  const parts = storagePath.split("/").filter(Boolean);
-  // remove o primeiro segmento se for um UUID (tenant ID)
-  const start = (parts.length > 0 && /^[0-9a-f-]{36}$/i.test(parts[0])) ? 1 : 0;
-  return parts.slice(start).map((seg, i, arr) => ({
-    name: i === arr.length - 1 ? name : seg,
-    path: parts.slice(0, start + i + 1).join("/"),
-  }));
-}
 
 // ── Breadcrumb ───────────────────────────────────────────────────────────────
 function updateBreadcrumb() {

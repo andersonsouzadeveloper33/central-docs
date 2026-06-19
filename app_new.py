@@ -295,6 +295,14 @@ class Api:
             return {}
 
     # ── Pastas ────────────────────────────────────────────────────────────────
+    def _get_trashed_paths(self) -> set:
+        """Retorna conjunto de storage_paths que estão na lixeira."""
+        try:
+            items = self.get_trash()
+            return {i["storage_path"] for i in items if "storage_path" in i}
+        except Exception:
+            return set()
+
     def get_root_folders(self) -> list:
         if not TENANT_ID: return []
         res = (sb.table("folders")
@@ -303,7 +311,8 @@ class Api:
                  .eq("parent_path", "")
                  .order("name")
                  .execute())
-        return res.data or []
+        trashed = self._get_trashed_paths()
+        return [f for f in (res.data or []) if f["storage_path"] not in trashed]
 
     def get_subfolders(self, parent_path: str) -> list:
         if not TENANT_ID: return []
@@ -317,6 +326,7 @@ class Api:
 
     def get_children(self, storage_path: str) -> list:
         if not TENANT_ID: return []
+        trashed = self._get_trashed_paths()
         folders = (sb.table("folders")
                      .select("id, name, storage_path, parent_path")
                      .eq("tenant_id", TENANT_ID)
@@ -330,7 +340,7 @@ class Api:
                    .order("name")
                    .execute()).data or []
 
-        result = [{"type": "folder", **f} for f in folders]
+        result = [{"type": "folder", **f} for f in folders if f["storage_path"] not in trashed]
         result += [{
             "type":         "file",
             "id":           f["id"],
@@ -340,7 +350,7 @@ class Api:
             "updated_at":   f.get("created_at") or "",
             "locked_by":    f.get("locked_by"),
             "locked_name":  f.get("locked_name"),
-        } for f in files]
+        } for f in files if f["storage_path"] not in trashed]
         return result
 
     def _real_size(self, file_id: str, storage_path: str, current_size) -> int:
@@ -587,36 +597,30 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def delete_item(self, item_type: str, item_id: str, storage_path: str) -> dict:
+        """Move o item para a lixeira (soft delete). A exclusão real ocorre ao esvaziar a lixeira."""
         try:
             perms = self.get_permissions()
             if not perms.get("can_delete") and not perms.get("is_admin"):
                 return {"ok": False, "error": "Sem permissão para excluir."}
 
             if item_type == "folder":
-                all_folders = (sb.table("folders").select("id, storage_path")
-                                 .eq("tenant_id", TENANT_ID).execute()).data or []
-                all_files   = (sb.table("files").select("id, storage_path, name")
-                                 .eq("tenant_id", TENANT_ID).execute()).data or []
-                prefix = storage_path.rstrip("/") + "/"
-                # get folder name for trash
                 fn_res = sb.table("folders").select("name").eq("id", item_id).execute()
                 folder_name = fn_res.data[0]["name"] if fn_res.data else storage_path
-                self._add_to_trash({"type": "folder", "id": item_id, "storage_path": storage_path, "name": folder_name})
-                for f in all_files:
-                    if f["storage_path"].startswith(prefix) or f["storage_path"] == storage_path:
-                        _storage_delete(f["storage_path"])
-                        sb.table("files").delete().eq("id", f["id"]).execute()
-                for f in all_folders:
-                    if f["storage_path"].startswith(prefix):
-                        sb.table("folders").delete().eq("id", f["id"]).execute()
-                sb.table("folders").delete().eq("id", item_id).execute()
-                _audit("excluiu", "pasta", storage_path)
+                # Coleta todos os filhos para registrar na lixeira junto com a pasta raiz
+                all_files = (sb.table("files").select("id, storage_path, name")
+                               .eq("tenant_id", TENANT_ID).execute()).data or []
+                prefix = storage_path.rstrip("/") + "/"
+                children = [{"type": "file", "id": f["id"], "storage_path": f["storage_path"], "name": f["name"]}
+                            for f in all_files if f["storage_path"].startswith(prefix)]
+                self._add_to_trash({
+                    "type": "folder", "id": item_id, "storage_path": storage_path,
+                    "name": folder_name, "children": children,
+                })
+                _audit("excluiu", "pasta", folder_name)
             else:
                 res = sb.table("files").select("name").eq("id", item_id).execute()
                 fname = res.data[0]["name"] if res.data else storage_path
                 self._add_to_trash({"type": "file", "id": item_id, "storage_path": storage_path, "name": fname})
-                _storage_delete(storage_path)
-                sb.table("files").delete().eq("id", item_id).execute()
                 _audit("excluiu", "arquivo", fname)
             return {"ok": True}
         except Exception as e:
@@ -976,7 +980,32 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def empty_trash(self) -> dict:
+        """Exclui permanentemente todos os itens da lixeira do banco e do R2."""
         try:
+            items = self.get_trash()
+            for item in items:
+                try:
+                    if item["type"] == "file":
+                        _storage_delete(item["storage_path"])
+                        sb.table("files").delete().eq("id", item["id"]).execute()
+                    elif item["type"] == "folder":
+                        # exclui filhos primeiro
+                        for child in item.get("children", []):
+                            try:
+                                _storage_delete(child["storage_path"])
+                                sb.table("files").delete().eq("id", child["id"]).execute()
+                            except Exception:
+                                pass
+                        # exclui subpastas e a pasta raiz
+                        all_folders = (sb.table("folders").select("id, storage_path")
+                                         .eq("tenant_id", TENANT_ID).execute()).data or []
+                        prefix = item["storage_path"].rstrip("/") + "/"
+                        for f in all_folders:
+                            if f["storage_path"].startswith(prefix):
+                                sb.table("folders").delete().eq("id", f["id"]).execute()
+                        sb.table("folders").delete().eq("id", item["id"]).execute()
+                except Exception:
+                    pass
             with open(self._trash_file(), "w", encoding="utf-8") as f:
                 json.dump([], f)
             return {"ok": True}

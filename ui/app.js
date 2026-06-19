@@ -939,7 +939,25 @@ async function loadSharedView() {
   renderFlatList("sharedList", items, {
     emptyMsg: "Nenhum arquivo foi compartilhado ainda.",
     metaFn: item => `Compartilhado por ${item.shared_by} em ${fmtDate(item.shared_at)}`,
+    actionsFn: item => `<button onclick="reshareFile('${item.storage_path}','${item.name.replace(/'/g,"\\'")}')" >Copiar link</button>`,
   });
+}
+
+async function reshareFile(storage_path, name) {
+  const btn = event.currentTarget || event.target;
+  btn.disabled = true;
+  btn.textContent = "Gerando...";
+  try {
+    const res = await api().share_file(storage_path, name, 24);
+    if (!res.ok) { showToast(res.error || "Erro ao gerar link.", "error"); return; }
+    await navigator.clipboard.writeText(res.url);
+    showToast("Link copiado! Válido por 24 horas.", "ok");
+  } catch(e) {
+    showToast("Erro ao copiar link.", "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Copiar link";
+  }
 }
 
 // ── Lixeira ───────────────────────────────────────────────────────────────────

@@ -362,7 +362,7 @@ class Api:
 
     def get_folder_stats(self, storage_path: str) -> dict:
         if not TENANT_ID: return {}
-        files   = (sb.table("files").select("id, storage_path, size")
+        files   = (sb.table("files").select("id, storage_path, size, created_at")
                      .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
                      .execute()).data or []
         folders = (sb.table("folders").select("id")

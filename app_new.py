@@ -483,7 +483,8 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def open_file(self, storage_path: str, filename: str) -> dict:
-        """Verifica trava, baixa do R2 (ou usa local), abre com programa padrão."""
+        """Verifica trava, baixa do R2, abre com programa padrão e monitora para re-upload."""
+        import threading, time
         try:
             # verifica se está travado por outra sessão (ignora locks com mais de 2h — sessão morta)
             lock = self.get_file_lock_info_by_path(storage_path)
@@ -504,15 +505,53 @@ class Api:
             if not local:
                 return {"ok": False, "error": "Arquivo não encontrado localmente nem no storage."}
 
-            # trava o arquivo para esta sessão
+            # busca o id do arquivo para trava
             res = (sb.table("files").select("id").eq("tenant_id", TENANT_ID)
                      .eq("storage_path", storage_path).execute())
-            if res.data:
-                file_id = res.data[0]["id"]
+            file_id = res.data[0]["id"] if res.data else None
+            if file_id:
                 self.lock_file(file_id)
 
             os.startfile(local)
             _audit("abriu", "arquivo", filename)
+
+            # thread de monitoramento: quando o editor fechar, faz upload e libera trava
+            def _watch(fid, local_path, sp):
+                directory = os.path.dirname(local_path)
+                fname     = os.path.basename(local_path)
+                lo_lock   = os.path.join(directory, f".~lock.{fname}#")
+                word_lock = os.path.join(directory, f"~${fname[2:]}")
+
+                def _is_open():
+                    if os.path.exists(lo_lock):   return True
+                    if os.path.exists(word_lock):  return True
+                    try:
+                        with open(local_path, "r+b"): pass
+                        return False
+                    except (IOError, PermissionError):
+                        return True
+
+                time.sleep(5)  # aguarda editor abrir e criar lock file
+                while True:
+                    time.sleep(3)
+                    if not _is_open():
+                        time.sleep(5)
+                        if not _is_open():
+                            # arquivo fechado — sincroniza com R2
+                            try:
+                                _r2().upload_file(local_path, CF_BUCKET, sp)
+                                # atualiza tamanho no banco
+                                sz = os.path.getsize(local_path)
+                                if fid:
+                                    sb.table("files").update({"size": sz}).eq("id", fid).execute()
+                                print(f"[R2] Sincronizado: {sp}")
+                            except Exception as e:
+                                print(f"[R2] Erro ao sincronizar: {e}")
+                            if fid:
+                                self.unlock_file(fid)
+                            break
+
+            threading.Thread(target=_watch, args=(file_id, local, storage_path), daemon=True).start()
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}

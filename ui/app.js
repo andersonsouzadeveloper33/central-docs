@@ -485,6 +485,32 @@ function openDetail(item) {
 function closeDetail() {
   detailItem = null;
   document.getElementById("detailPanel").classList.remove("open");
+  // reseta para aba Detalhes
+  document.querySelectorAll(".detail-tab").forEach((t, i) => t.classList.toggle("active", i === 0));
+  document.getElementById("detailBody").style.display     = "";
+  document.getElementById("detailActivity").style.display = "none";
+}
+
+async function loadItemActivity(name) {
+  const list = document.getElementById("activityList");
+  list.innerHTML = '<p class="activity-empty">Carregando...</p>';
+  try {
+    const items = await api().get_item_activity(name);
+    if (!items.length) {
+      list.innerHTML = '<p class="activity-empty">Nenhuma atividade registrada.</p>';
+      return;
+    }
+    list.innerHTML = items.map(a => `
+      <div class="activity-item">
+        <div class="activity-dot"></div>
+        <div class="activity-info">
+          <span class="activity-action"><strong>${a.user_name}</strong> ${a.action}</span>
+          <span class="activity-meta">${fmtDate(a.created_at)}</span>
+        </div>
+      </div>`).join("");
+  } catch(e) {
+    list.innerHTML = `<p class="activity-empty">Erro ao carregar.</p>`;
+  }
 }
 
 async function openFile(storagePath, filename) {
@@ -499,9 +525,13 @@ async function openFile(storagePath, filename) {
 
 function initDetailTabs() {
   document.querySelectorAll(".detail-tab").forEach(tab => {
-    tab.addEventListener("click", () => {
+    tab.addEventListener("click", async () => {
       document.querySelectorAll(".detail-tab").forEach(t => t.classList.remove("active"));
       tab.classList.add("active");
+      const isActivity = tab.dataset.tab === "activity";
+      document.getElementById("detailBody").style.display     = isActivity ? "none" : "";
+      document.getElementById("detailActivity").style.display = isActivity ? "" : "none";
+      if (isActivity && detailItem) await loadItemActivity(detailItem.name);
     });
   });
 

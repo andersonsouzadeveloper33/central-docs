@@ -631,6 +631,20 @@ class Api:
         except Exception:
             return []
 
+    def get_item_activity(self, target_name: str) -> list:
+        """Retorna histórico de atividades de um arquivo ou pasta específico."""
+        try:
+            res = (sb.table("audit_log")
+                     .select("action, user_name, created_at")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("target_name", target_name)
+                     .order("created_at", desc=True)
+                     .limit(50)
+                     .execute())
+            return res.data or []
+        except Exception:
+            return []
+
     # ── Usuários ──────────────────────────────────────────────────────────────
     def get_users(self) -> list:
         try:

@@ -43,17 +43,31 @@ function showApp() {
   document.getElementById("appShell").style.display       = "flex";
 }
 
+const ALL_VIEWS = ["homeView","folderView","recentView","favoritesView","sharedView","trashView"];
+
+function showView(id) {
+  ALL_VIEWS.forEach(v => {
+    const el = document.getElementById(v);
+    if (el) el.style.display = "none";
+  });
+  const target = document.getElementById(id);
+  if (target) target.style.display = "";
+  closeDetail();
+}
+
 function showHomeView() {
-  document.getElementById("homeView").style.display   = "";
-  document.getElementById("folderView").style.display = "none";
+  showView("homeView");
   state.currentPath = null;
   state.breadcrumb  = [];
   document.getElementById("breadcrumb").innerHTML = "<strong>Início</strong>";
+  setActiveNav("navDocumentos");
 }
 
 function showFolderView() {
-  document.getElementById("homeView").style.display   = "none";
-  document.getElementById("folderView").style.display = "flex";
+  showView("folderView");
+  // folderView uses flex
+  const fv = document.getElementById("folderView");
+  if (fv) fv.style.display = "flex";
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -482,6 +496,15 @@ function openDetail(item) {
   document.getElementById("dSize").textContent      = item.type === "folder" ? "—" : (item.size || "—");
   document.getElementById("dCreated").textContent   = item.updated_at ? fmtDate(item.updated_at) : "—";
   document.getElementById("dModified").textContent  = item.updated_at ? fmtDate(item.updated_at) : "—";
+
+  // atualiza estado do botão favoritar
+  const favBtn = document.getElementById("detailFavBtn");
+  if (favBtn) {
+    api().is_favorite(item.storage_path).then(isFav => {
+      favBtn.classList.toggle("active", isFav);
+      favBtn.querySelector("svg").setAttribute("fill", isFav ? "#f59e0b" : "none");
+    });
+  }
 }
 
 function closeDetail() {
@@ -831,15 +854,172 @@ function initShare() {
   });
 }
 
+// ── Nav active state ──────────────────────────────────────────────────────────
+function setActiveNav(activeId) {
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+  const el = document.getElementById(activeId);
+  if (el) el.classList.add("active");
+}
+
+// ── Flat list renderer ────────────────────────────────────────────────────────
+function renderFlatList(containerId, items, opts = {}) {
+  const el = document.getElementById(containerId);
+  if (!items.length) {
+    el.innerHTML = `<p class="flat-empty">${opts.emptyMsg || "Nenhum item encontrado."}</p>`;
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const isFolder = item.type === "folder";
+    const icon = isFolder
+      ? `<svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    const meta = opts.metaFn ? opts.metaFn(item) : (item.updated_at ? fmtDate(item.updated_at) : "");
+    const actions = opts.actionsFn ? opts.actionsFn(item) : "";
+    return `
+      <div class="flat-item" data-path="${item.storage_path}" data-type="${item.type}" data-name="${item.name}">
+        <div class="flat-item-icon">${icon}</div>
+        <div class="flat-item-info">
+          <div class="flat-item-name">${item.name}</div>
+          ${meta ? `<div class="flat-item-meta">${meta}</div>` : ""}
+        </div>
+        <span class="flat-item-size">${item.size || ""}</span>
+        <div class="flat-item-actions">${actions}</div>
+      </div>`;
+  }).join("");
+
+  el.querySelectorAll(".flat-item").forEach(row => {
+    row.addEventListener("dblclick", async () => {
+      if (row.dataset.type === "file") {
+        await openFile(row.dataset.path, row.dataset.name);
+      } else {
+        showFolderView();
+        const node = document.querySelector(`.tree-node[data-path="${row.dataset.path}"]`) || makeVirtualNode(row.dataset.path);
+        await selectNode(node, { storage_path: row.dataset.path, name: row.dataset.name });
+      }
+    });
+  });
+}
+
+// ── Recentes ──────────────────────────────────────────────────────────────────
+async function loadRecentView() {
+  showView("recentView");
+  setActiveNav("navRecent");
+  document.getElementById("recentList").innerHTML = '<p class="flat-empty">Carregando...</p>';
+  const items = await api().get_recent_files();
+  renderFlatList("recentList", items, {
+    emptyMsg: "Nenhum arquivo acessado recentemente.",
+    metaFn: item => `${item.last_action} em ${fmtDate(item.last_action_at)}`,
+  });
+}
+
+// ── Favoritos ─────────────────────────────────────────────────────────────────
+async function loadFavoritesView() {
+  showView("favoritesView");
+  setActiveNav("navFavorites");
+  document.getElementById("favoritesList").innerHTML = '<p class="flat-empty">Carregando...</p>';
+  const items = await api().get_favorites();
+  renderFlatList("favoritesList", items, {
+    emptyMsg: "Nenhum favorito ainda. Clique em ★ Favoritar no painel de detalhes.",
+    metaFn: item => item.updated_at ? fmtDate(item.updated_at) : "",
+    actionsFn: item => `<button onclick="removeFav('${item.storage_path}')">Remover</button>`,
+  });
+}
+
+async function removeFav(storage_path) {
+  await api().toggle_favorite(storage_path);
+  await loadFavoritesView();
+}
+
+// ── Compartilhados ────────────────────────────────────────────────────────────
+async function loadSharedView() {
+  showView("sharedView");
+  setActiveNav("navShared");
+  document.getElementById("sharedList").innerHTML = '<p class="flat-empty">Carregando...</p>';
+  const items = await api().get_shared_files();
+  renderFlatList("sharedList", items, {
+    emptyMsg: "Nenhum arquivo foi compartilhado ainda.",
+    metaFn: item => `Compartilhado por ${item.shared_by} em ${fmtDate(item.shared_at)}`,
+  });
+}
+
+// ── Lixeira ───────────────────────────────────────────────────────────────────
+async function loadTrashView() {
+  showView("trashView");
+  setActiveNav("navTrash");
+  document.getElementById("trashList").innerHTML = '<p class="flat-empty">Carregando...</p>';
+  const items = await api().get_trash();
+  const el = document.getElementById("trashList");
+  if (!items.length) {
+    el.innerHTML = '<p class="flat-empty">A lixeira está vazia.</p>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const icon = item.type === "folder"
+      ? `<svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    return `
+      <div class="flat-item" data-path="${item.storage_path}">
+        <div class="flat-item-icon">${icon}</div>
+        <div class="flat-item-info">
+          <div class="flat-item-name">${item.name}</div>
+          <div class="flat-item-meta">Excluído em ${fmtDate(item.deleted_at)}</div>
+        </div>
+        <div class="flat-item-actions">
+          <button onclick="restoreTrash('${item.storage_path}')">Restaurar</button>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+async function restoreTrash(storage_path) {
+  await api().restore_from_trash(storage_path);
+  showToast("Item restaurado.", "ok");
+  await loadTrashView();
+  await loadSidebar();
+}
+
+// ── Botão Favoritar no painel de detalhes ─────────────────────────────────────
+function initFavoriteBtn() {
+  document.getElementById("detailFavBtn")?.addEventListener("click", async () => {
+    if (!detailItem) return;
+    const res = await api().toggle_favorite(detailItem.storage_path);
+    const btn = document.getElementById("detailFavBtn");
+    if (res.is_favorite) {
+      btn.classList.add("active");
+      btn.querySelector("svg").setAttribute("fill", "#f59e0b");
+      showToast("Adicionado aos favoritos.", "ok");
+    } else {
+      btn.classList.remove("active");
+      btn.querySelector("svg").setAttribute("fill", "none");
+      showToast("Removido dos favoritos.", "ok");
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initLogin();
   initChangePw();
   initSearch();
   initDetailTabs();
+  initFavoriteBtn();
   initNewDropdown();
   initModal();
   initUpload();
   initShare();
+
+  // nav clicks
+  document.getElementById("navDocumentos")?.addEventListener("click", e => { e.preventDefault(); showHomeView(); });
+  document.getElementById("navRecent")?.addEventListener("click", e => { e.preventDefault(); loadRecentView(); });
+  document.getElementById("navFavorites")?.addEventListener("click", e => { e.preventDefault(); loadFavoritesView(); });
+  document.getElementById("navShared")?.addEventListener("click", e => { e.preventDefault(); loadSharedView(); });
+  document.getElementById("navTrash")?.addEventListener("click", e => { e.preventDefault(); loadTrashView(); });
+
+  document.getElementById("emptyTrashBtn")?.addEventListener("click", async () => {
+    if (!confirm("Esvaziar a lixeira? Esta ação não pode ser desfeita.")) return;
+    await api().empty_trash();
+    showToast("Lixeira esvaziada.", "ok");
+    await loadTrashView();
+  });
 
   // fechar painel clicando fora
   document.querySelector(".content").addEventListener("click", e => {

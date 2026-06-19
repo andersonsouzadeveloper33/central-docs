@@ -598,6 +598,10 @@ class Api:
                 all_files   = (sb.table("files").select("id, storage_path, name")
                                  .eq("tenant_id", TENANT_ID).execute()).data or []
                 prefix = storage_path.rstrip("/") + "/"
+                # get folder name for trash
+                fn_res = sb.table("folders").select("name").eq("id", item_id).execute()
+                folder_name = fn_res.data[0]["name"] if fn_res.data else storage_path
+                self._add_to_trash({"type": "folder", "id": item_id, "storage_path": storage_path, "name": folder_name})
                 for f in all_files:
                     if f["storage_path"].startswith(prefix) or f["storage_path"] == storage_path:
                         _storage_delete(f["storage_path"])
@@ -610,6 +614,7 @@ class Api:
             else:
                 res = sb.table("files").select("name").eq("id", item_id).execute()
                 fname = res.data[0]["name"] if res.data else storage_path
+                self._add_to_trash({"type": "file", "id": item_id, "storage_path": storage_path, "name": fname})
                 _storage_delete(storage_path)
                 sb.table("files").delete().eq("id", item_id).execute()
                 _audit("excluiu", "arquivo", fname)
@@ -806,6 +811,178 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ── Recentes ─────────────────────────────────────────────────────────────
+    def get_recent_files(self) -> list:
+        """Últimos 30 arquivos abertos ou criados pelo usuário atual."""
+        try:
+            res = (sb.table("audit_log")
+                     .select("target_name, created_at, action")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("user_id", CURRENT_USER.get("id"))
+                     .in_("action", ["abriu", "criou", "fez upload"])
+                     .order("created_at", desc=True)
+                     .limit(50)
+                     .execute())
+            seen = set()
+            result = []
+            for row in (res.data or []):
+                name = row.get("target_name")
+                if name and name not in seen:
+                    seen.add(name)
+                    f = (sb.table("files").select("id, name, storage_path, size, created_at")
+                           .eq("tenant_id", TENANT_ID).eq("name", name).limit(1).execute()).data
+                    if f:
+                        result.append({
+                            "type": "file",
+                            "id": f[0]["id"],
+                            "name": f[0]["name"],
+                            "storage_path": f[0]["storage_path"],
+                            "size": _fmt_size(f[0].get("size")),
+                            "updated_at": f[0].get("created_at") or "",
+                            "last_action": row["action"],
+                            "last_action_at": row["created_at"],
+                        })
+                    if len(result) >= 30:
+                        break
+            return result
+        except Exception as e:
+            print(f"[recentes] {e}")
+            return []
+
+    # ── Favoritos ────────────────────────────────────────────────────────────
+    def _favorites_file(self) -> str:
+        path = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, f".favorites_{CURRENT_USER.get('id','')}.json")
+
+    def get_favorites(self) -> list:
+        try:
+            with open(self._favorites_file(), "r", encoding="utf-8") as f:
+                paths = json.load(f)
+            result = []
+            for sp in paths:
+                row = (sb.table("folders").select("id, name, storage_path, parent_path")
+                         .eq("tenant_id", TENANT_ID).eq("storage_path", sp).limit(1).execute()).data
+                if row:
+                    result.append({"type": "folder", **row[0]})
+                    continue
+                row = (sb.table("files").select("id, name, storage_path, size, created_at")
+                         .eq("tenant_id", TENANT_ID).eq("storage_path", sp).limit(1).execute()).data
+                if row:
+                    result.append({
+                        "type": "file", "id": row[0]["id"], "name": row[0]["name"],
+                        "storage_path": row[0]["storage_path"],
+                        "size": _fmt_size(row[0].get("size")),
+                        "updated_at": row[0].get("created_at") or "",
+                    })
+            return result
+        except Exception:
+            return []
+
+    def toggle_favorite(self, storage_path: str) -> dict:
+        try:
+            fpath = self._favorites_file()
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    favs = json.load(f)
+            except Exception:
+                favs = []
+            if storage_path in favs:
+                favs.remove(storage_path)
+                is_fav = False
+            else:
+                favs.insert(0, storage_path)
+                is_fav = True
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(favs, f)
+            return {"ok": True, "is_favorite": is_fav}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def is_favorite(self, storage_path: str) -> bool:
+        try:
+            with open(self._favorites_file(), "r", encoding="utf-8") as f:
+                return storage_path in json.load(f)
+        except Exception:
+            return False
+
+    # ── Compartilhados ───────────────────────────────────────────────────────
+    def get_shared_files(self) -> list:
+        """Arquivos cujo link de compartilhamento foi gerado por qualquer usuário do tenant."""
+        try:
+            res = (sb.table("audit_log")
+                     .select("target_name, user_name, created_at")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("action", "compartilhou")
+                     .order("created_at", desc=True)
+                     .limit(50)
+                     .execute())
+            seen = set()
+            result = []
+            for row in (res.data or []):
+                name = row.get("target_name")
+                if name and name not in seen:
+                    seen.add(name)
+                    f = (sb.table("files").select("id, name, storage_path, size, created_at")
+                           .eq("tenant_id", TENANT_ID).eq("name", name).limit(1).execute()).data
+                    if f:
+                        result.append({
+                            "type": "file",
+                            "id": f[0]["id"],
+                            "name": f[0]["name"],
+                            "storage_path": f[0]["storage_path"],
+                            "size": _fmt_size(f[0].get("size")),
+                            "updated_at": f[0].get("created_at") or "",
+                            "shared_by": row["user_name"],
+                            "shared_at": row["created_at"],
+                        })
+            return result
+        except Exception as e:
+            print(f"[compartilhados] {e}")
+            return []
+
+    # ── Lixeira ──────────────────────────────────────────────────────────────
+    def _trash_file(self) -> str:
+        path = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, ".trash.json")
+
+    def get_trash(self) -> list:
+        try:
+            with open(self._trash_file(), "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    def _add_to_trash(self, item: dict):
+        try:
+            from datetime import datetime
+            items = self.get_trash()
+            item["deleted_at"] = datetime.now().isoformat()
+            items.insert(0, item)
+            with open(self._trash_file(), "w", encoding="utf-8") as f:
+                json.dump(items[:200], f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def restore_from_trash(self, storage_path: str) -> dict:
+        try:
+            items = self.get_trash()
+            items = [i for i in items if i.get("storage_path") != storage_path]
+            with open(self._trash_file(), "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def empty_trash(self) -> dict:
+        try:
+            with open(self._trash_file(), "w", encoding="utf-8") as f:
+                json.dump([], f)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ── Compartilhar (link temporário pré-assinado do R2) ────────────────────
     def share_file(self, storage_path: str, filename: str, expires_hours: int = 24) -> dict:
         try:
@@ -821,6 +998,7 @@ class Api:
                 },
                 ExpiresIn=expires_hours * 3600,
             )
+            _audit("compartilhou", "arquivo", filename)
             return {"ok": True, "url": url, "expires_hours": expires_hours}
         except Exception as e:
             return {"ok": False, "error": str(e)}

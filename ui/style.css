@@ -608,3 +608,32 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.toast-warn { background: #92400e; }
 .toast.toast-error { background: #7f1d1d; }
+
+/* ── Flat list (recentes, favoritos, compartilhados, lixeira) ─── */
+.flat-list { display: flex; flex-direction: column; gap: 4px; }
+.flat-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 14px; border-radius: 10px; cursor: pointer;
+  border: 1px solid transparent; transition: background .15s, border-color .15s;
+  background: var(--surface, #fff);
+}
+.flat-item:hover { background: var(--bg); border-color: var(--border); }
+.flat-item-icon { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.flat-item-icon svg { width: 22px; height: 22px; }
+.flat-item-info { flex: 1; min-width: 0; }
+.flat-item-name { font-size: 14px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flat-item-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.flat-item-size { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+.flat-empty { text-align: center; color: var(--text-muted); font-size: 14px; padding: 48px 0; }
+.flat-item-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.flat-item-actions button { padding: 4px 10px; border-radius: 6px; font-size: 12px; border: 1px solid var(--border); background: var(--bg); cursor: pointer; color: var(--text-muted); }
+.flat-item-actions button:hover { background: var(--blue); color: #fff; border-color: var(--blue); }
+.flat-item-actions button.danger:hover { background: #ef4444; border-color: #ef4444; }
+
+/* btn-danger */
+.btn-danger { padding: 8px 16px; border-radius: 8px; background: #ef4444; color: #fff; border: none; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn-danger:hover { background: #dc2626; }
+
+/* Fav button */
+.detail-btn.fav { border-color: #f59e0b; color: #f59e0b; }
+.detail-btn.fav:hover, .detail-btn.fav.active { background: #f59e0b; color: #fff; }

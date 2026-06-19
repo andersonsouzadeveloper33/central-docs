@@ -97,6 +97,26 @@ def _storage_delete(storage_path: str):
     except Exception as e:
         print(f"[R2] delete falhou: {e}")
 
+def _storage_move(old_path: str, new_path: str):
+    """Renomeia arquivo: copia local + R2 para novo caminho e apaga o antigo."""
+    old_local = _local_path(old_path)
+    new_local = _local_path(new_path)
+    if os.path.exists(old_local):
+        os.makedirs(os.path.dirname(new_local), exist_ok=True)
+        try: shutil.copy2(old_local, new_local)
+        except Exception: pass
+        try: os.remove(old_local)
+        except Exception: pass
+    try:
+        _r2().copy_object(
+            Bucket=CF_BUCKET,
+            CopySource={"Bucket": CF_BUCKET, "Key": old_path},
+            Key=new_path,
+        )
+        _r2().delete_object(Bucket=CF_BUCKET, Key=old_path)
+    except Exception as e:
+        print(f"[R2] move falhou (offline?): {e}")
+
 # ── Utilitários ───────────────────────────────────────────────────────────────
 def _ui_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -425,6 +445,24 @@ class Api:
                 return {"ok": False, "error": "Pasta não encontrada."}
             old = res.data[0]
             new_storage = _make_storage_path(old["parent_path"], new_name, is_folder=True)
+            # atualiza storage_path de todos os filhos (pastas e arquivos)
+            old_prefix = old["storage_path"].rstrip("/") + "/"
+            new_prefix = new_storage.rstrip("/") + "/"
+            child_folders = (sb.table("folders").select("id, storage_path, parent_path")
+                               .eq("tenant_id", TENANT_ID).execute()).data or []
+            child_files   = (sb.table("files").select("id, storage_path, parent_path")
+                               .eq("tenant_id", TENANT_ID).execute()).data or []
+            for cf in child_folders:
+                if cf["storage_path"].startswith(old_prefix):
+                    new_sp = new_prefix + cf["storage_path"][len(old_prefix):]
+                    new_pp = new_prefix + cf["parent_path"][len(old_prefix):] if cf["parent_path"].startswith(old_prefix) else new_storage
+                    sb.table("folders").update({"storage_path": new_sp, "parent_path": new_pp}).eq("id", cf["id"]).execute()
+            for cf in child_files:
+                if cf["storage_path"].startswith(old_prefix):
+                    new_sp = new_prefix + cf["storage_path"][len(old_prefix):]
+                    new_pp = new_prefix + cf["parent_path"][len(old_prefix):] if cf["parent_path"].startswith(old_prefix) else new_storage
+                    _storage_move(cf["storage_path"], new_sp)
+                    sb.table("files").update({"storage_path": new_sp, "parent_path": new_pp}).eq("id", cf["id"]).execute()
             sb.table("folders").update({"name": new_name, "storage_path": new_storage}).eq("id", folder_id).execute()
             _audit("renomeou", "pasta", f"{old['name']} → {new_name}")
             return {"ok": True}
@@ -590,6 +628,7 @@ class Api:
                 return {"ok": False, "error": "Arquivo não encontrado."}
             old = res.data[0]
             new_storage = _make_storage_path(old["parent_path"], new_name)
+            _storage_move(old["storage_path"], new_storage)
             sb.table("files").update({"name": new_name, "storage_path": new_storage}).eq("id", file_id).execute()
             _audit("renomeou", "arquivo", f"{old['name']} → {new_name}")
             return {"ok": True}

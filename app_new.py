@@ -755,11 +755,18 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     # ── Compartilhar (link temporário pré-assinado do R2) ────────────────────
-    def share_file(self, storage_path: str, expires_hours: int = 24) -> dict:
+    def share_file(self, storage_path: str, filename: str, expires_hours: int = 24) -> dict:
         try:
+            import mimetypes
+            mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
             url = _r2().generate_presigned_url(
                 "get_object",
-                Params={"Bucket": CF_BUCKET, "Key": storage_path},
+                Params={
+                    "Bucket": CF_BUCKET,
+                    "Key":    storage_path,
+                    "ResponseContentType":        mime,
+                    "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                },
                 ExpiresIn=expires_hours * 3600,
             )
             return {"ok": True, "url": url, "expires_hours": expires_hours}

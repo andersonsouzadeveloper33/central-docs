@@ -801,7 +801,7 @@ function initShare() {
     genBtn.textContent = "Gerando...";
     errorEl.textContent = "";
     const hours = parseInt(document.querySelector("input[name='shareExpire']:checked")?.value || "24");
-    const res = await api().share_file(detailItem.storage_path, hours);
+    const res = await api().share_file(detailItem.storage_path, detailItem.name, hours);
     genBtn.disabled = false;
     genBtn.textContent = "Gerar link";
     if (!res.ok) { errorEl.textContent = res.error; return; }

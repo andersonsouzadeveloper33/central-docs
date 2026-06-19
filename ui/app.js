@@ -445,6 +445,8 @@ async function loadStats(path) {
     if (cards[0]) cards[0].textContent = fc;
     if (cards[1]) cards[1].textContent = fo;
     if (cards[2]) cards[2].textContent = sz;
+    const lc = document.getElementById("statLastChange");
+    if (lc) lc.textContent = s.last_change ? fmtDate(s.last_change) : "—";
     // folder meta (topbar)
     const mf = document.getElementById("metaFiles");
     const mfo = document.getElementById("metaFolders");

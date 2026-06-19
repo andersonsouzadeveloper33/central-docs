@@ -369,7 +369,20 @@ class Api:
                      .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
                      .execute()).data or []
         total = sum(self._real_size(f["id"], f["storage_path"], f.get("size")) for f in files)
-        return {"file_count": len(files), "folder_count": len(folders), "total_size": _fmt_size(total)}
+
+        # data da última alteração: arquivo mais recente na pasta
+        last_change = None
+        if files:
+            dates = [f.get("created_at") for f in files if f.get("created_at")]
+            if dates:
+                last_change = max(dates)
+
+        return {
+            "file_count":   len(files),
+            "folder_count": len(folders),
+            "total_size":   _fmt_size(total),
+            "last_change":  last_change,
+        }
 
     def create_folder(self, name: str, parent_path: str) -> dict:
         try:

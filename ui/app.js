@@ -773,6 +773,62 @@ function showToast(msg, type = "ok") {
   toast._t = setTimeout(() => toast.classList.remove("show"), 3000);
 }
 
+// ── Compartilhar ──────────────────────────────────────────────────────────────
+function initShare() {
+  const overlay   = document.getElementById("shareOverlay");
+  const linkWrap  = document.getElementById("shareLinkWrap");
+  const linkInput = document.getElementById("shareLinkInput");
+  const errorEl   = document.getElementById("shareError");
+  const noteEl    = document.getElementById("shareExpireNote");
+  const genBtn    = document.getElementById("shareGenBtn");
+
+  function closeShare() {
+    overlay.classList.remove("open");
+    linkWrap.style.display = "none";
+    linkInput.value = "";
+    errorEl.textContent = "";
+    genBtn.disabled = false;
+    genBtn.textContent = "Gerar link";
+  }
+
+  document.getElementById("shareClose").addEventListener("click",  closeShare);
+  document.getElementById("shareCancel").addEventListener("click", closeShare);
+  overlay.addEventListener("click", e => { if (e.target === overlay) closeShare(); });
+
+  genBtn.addEventListener("click", async () => {
+    if (!detailItem || detailItem.type !== "file") return;
+    genBtn.disabled = true;
+    genBtn.textContent = "Gerando...";
+    errorEl.textContent = "";
+    const hours = parseInt(document.querySelector("input[name='shareExpire']:checked")?.value || "24");
+    const res = await api().share_file(detailItem.storage_path, hours);
+    genBtn.disabled = false;
+    genBtn.textContent = "Gerar link";
+    if (!res.ok) { errorEl.textContent = res.error; return; }
+    linkInput.value = res.url;
+    linkWrap.style.display = "";
+    const label = hours < 24 ? `${hours}h` : hours === 24 ? "24 horas" : "7 dias";
+    noteEl.textContent = `Este link expira em ${label}.`;
+  });
+
+  document.getElementById("shareCopyBtn").addEventListener("click", () => {
+    if (!linkInput.value) return;
+    navigator.clipboard.writeText(linkInput.value).then(() => showToast("Link copiado!", "ok"));
+  });
+
+  // abre o modal ao clicar em Compartilhar no painel de detalhes
+  document.querySelector(".detail-btn.share").addEventListener("click", () => {
+    if (!detailItem || detailItem.type !== "file") {
+      showToast("Selecione um arquivo para compartilhar.", "warn"); return;
+    }
+    linkWrap.style.display = "none";
+    linkInput.value = "";
+    errorEl.textContent = "";
+    document.querySelector("input[name='shareExpire'][value='24']").checked = true;
+    overlay.classList.add("open");
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initLogin();
   initChangePw();
@@ -781,6 +837,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initNewDropdown();
   initModal();
   initUpload();
+  initShare();
 
   // fechar painel clicando fora
   document.querySelector(".content").addEventListener("click", e => {

@@ -385,6 +385,39 @@
     </div>
   </div>
 
+  <!-- Modal: compartilhar -->
+  <div class="modal-overlay" id="shareOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Compartilhar arquivo</span>
+        <button class="modal-close" id="shareClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label">Validade do link</label>
+        <div class="share-expire-options">
+          <label class="share-expire-opt"><input type="radio" name="shareExpire" value="1" /> 1 hora</label>
+          <label class="share-expire-opt"><input type="radio" name="shareExpire" value="24" checked /> 24 horas</label>
+          <label class="share-expire-opt"><input type="radio" name="shareExpire" value="168" /> 7 dias</label>
+        </div>
+        <div id="shareLinkWrap" style="display:none; margin-top:14px;">
+          <label class="modal-label">Link gerado</label>
+          <div class="share-link-row">
+            <input class="modal-input" id="shareLinkInput" type="text" readonly />
+            <button class="btn-copy" id="shareCopyBtn" title="Copiar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+          <p class="share-expire-note" id="shareExpireNote"></p>
+        </div>
+        <p class="modal-error" id="shareError"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="shareCancel">Fechar</button>
+        <button class="modal-btn confirm" id="shareGenBtn">Gerar link</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
 </body>
 </html>

@@ -754,6 +754,18 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ── Compartilhar (link temporário pré-assinado do R2) ────────────────────
+    def share_file(self, storage_path: str, expires_hours: int = 24) -> dict:
+        try:
+            url = _r2().generate_presigned_url(
+                "get_object",
+                Params={"Bucket": CF_BUCKET, "Key": storage_path},
+                ExpiresIn=expires_hours * 3600,
+            )
+            return {"ok": True, "url": url, "expires_hours": expires_hours}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ── Ping ──────────────────────────────────────────────────────────────────
     def ping(self) -> dict:
         return {"ok": True}

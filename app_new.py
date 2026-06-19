@@ -414,6 +414,28 @@ class Api:
             "last_change":  last_change,
         }
 
+    def get_tenant_stats(self) -> dict:
+        """Resumo global do tenant: total de arquivos, pastas, tamanho e última alteração."""
+        if not TENANT_ID: return {}
+        trashed = self._get_trashed_paths()
+        files   = (sb.table("files").select("id, storage_path, size, created_at")
+                     .eq("tenant_id", TENANT_ID).execute()).data or []
+        folders = (sb.table("folders").select("id")
+                     .eq("tenant_id", TENANT_ID).execute()).data or []
+        files   = [f for f in files   if f["storage_path"] not in trashed]
+        total   = sum(f.get("size") or 0 for f in files)
+        last_change = None
+        if files:
+            dates = [f.get("created_at") for f in files if f.get("created_at")]
+            if dates:
+                last_change = max(dates)
+        return {
+            "file_count":   len(files),
+            "folder_count": len(folders),
+            "total_size":   _fmt_size(total),
+            "last_change":  last_change,
+        }
+
     def create_folder(self, name: str, parent_path: str) -> dict:
         try:
             perms = self.get_permissions()

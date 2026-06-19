@@ -153,7 +153,7 @@
           <div class="home-header">
             <div>
               <h1 class="home-title">Meus Documentos</h1>
-              <p class="home-sub">Selecione uma pasta para começar</p>
+              <p class="home-sub">Visão geral do seu espaço de trabalho</p>
             </div>
             <div class="btn-new-group" id="btnNewGroupHome">
               <button class="btn-primary" id="btnNewHome">
@@ -171,8 +171,63 @@
               </div>
             </div>
           </div>
-          <div class="home-grid" id="homeGrid">
-            <!-- preenchido pelo JS -->
+
+          <!-- Cards de resumo global -->
+          <div class="home-stats-row" id="homeStats">
+            <div class="home-stat-card">
+              <div class="home-stat-icon" style="background:#eff6ff">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-value" id="hsTotalFiles">—</span>
+                <span class="home-stat-label">Arquivos</span>
+              </div>
+            </div>
+            <div class="home-stat-card">
+              <div class="home-stat-icon" style="background:#fffbeb">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-value" id="hsTotalFolders">—</span>
+                <span class="home-stat-label">Pastas</span>
+              </div>
+            </div>
+            <div class="home-stat-card">
+              <div class="home-stat-icon" style="background:#f0fdf4">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-value" id="hsTotalSize">—</span>
+                <span class="home-stat-label">Armazenamento</span>
+              </div>
+            </div>
+            <div class="home-stat-card">
+              <div class="home-stat-icon" style="background:#fff7ed">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-value" id="hsLastChange">—</span>
+                <span class="home-stat-label">Última alteração</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pastas raiz -->
+          <div class="home-section">
+            <h2 class="home-section-title">Pastas</h2>
+            <div class="home-grid" id="homeGrid"></div>
+          </div>
+
+          <!-- Recentes na home -->
+          <div class="home-section" id="homeRecentSection">
+            <h2 class="home-section-title">Recentes</h2>
+            <div class="flat-list" id="homeRecentList"></div>
+          </div>
+
+          <!-- Favoritos na home -->
+          <div class="home-section" id="homeFavSection">
+            <h2 class="home-section-title">Favoritos</h2>
+            <div class="flat-list" id="homeFavList"></div>
           </div>
         </div>
 

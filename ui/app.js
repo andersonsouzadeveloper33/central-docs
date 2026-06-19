@@ -90,6 +90,47 @@ function showHomeView() {
   state.navStack    = [];
   document.getElementById("breadcrumb").innerHTML = "<strong>Início</strong>";
   setActiveNav("navDocumentos");
+  loadHomeDashboard();
+}
+
+async function loadHomeDashboard() {
+  // Carrega stats, recentes e favoritos em paralelo
+  const [stats, recents, favs] = await Promise.all([
+    api().get_tenant_stats().catch(() => ({})),
+    api().get_recent_files().catch(() => []),
+    api().get_favorites().catch(() => []),
+  ]);
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set("hsTotalFiles",   stats.file_count   ?? "—");
+  set("hsTotalFolders", stats.folder_count ?? "—");
+  set("hsTotalSize",    stats.total_size   ?? "—");
+  set("hsLastChange",   stats.last_change  ? fmtDate(stats.last_change) : "—");
+
+  // ── Recentes ───────────────────────────────────────────────────────────────
+  const recentSection = document.getElementById("homeRecentSection");
+  if (recents.length) {
+    recentSection.style.display = "";
+    renderFlatList("homeRecentList", recents.slice(0, 6), {
+      emptyMsg: "",
+      metaFn: item => item.last_action_at ? fmtDate(item.last_action_at) : "",
+    });
+  } else {
+    recentSection.style.display = "none";
+  }
+
+  // ── Favoritos ──────────────────────────────────────────────────────────────
+  const favSection = document.getElementById("homeFavSection");
+  if (favs.length) {
+    favSection.style.display = "";
+    renderFlatList("homeFavList", favs.slice(0, 6), {
+      emptyMsg: "",
+      metaFn: item => item.updated_at ? fmtDate(item.updated_at) : "",
+    });
+  } else {
+    favSection.style.display = "none";
+  }
 }
 
 function showFolderView() {
@@ -237,6 +278,10 @@ async function loadSidebar() {
     }
     folders.forEach(f => tree.appendChild(buildTreeNode(f, 0)));
     await loadHomeGrid(folders);
+    // se estiver na home, recarrega o dashboard (stats/recentes/favoritos)
+    if (document.getElementById("homeView")?.style.display !== "none") {
+      loadHomeDashboard();
+    }
   } catch(e) {
     tree.innerHTML = `<div class="tree-empty">Erro ao carregar</div>`;
     console.error(e);

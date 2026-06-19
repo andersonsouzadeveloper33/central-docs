@@ -637,3 +637,11 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 /* Fav button */
 .detail-btn.fav { border-color: #f59e0b; color: #f59e0b; }
 .detail-btn.fav:hover, .detail-btn.fav.active { background: #f59e0b; color: #fff; }
+
+/* ── Modal de confirmação customizado ──────────────────────────────────────── */
+.confirm-modal { max-width: 400px; }
+.confirm-message { font-size: 14px; color: var(--text); line-height: 1.5; }
+.modal-btn.danger {
+  background: #ef4444; color: #fff; border: none;
+}
+.modal-btn.danger:hover { background: #dc2626; }

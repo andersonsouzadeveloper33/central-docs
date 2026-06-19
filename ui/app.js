@@ -6,6 +6,33 @@ const state = {
   expanded:    new Set(),   // paths de pastas expandidas na sidebar
 };
 
+// ── Diálogos customizados ─────────────────────────────────────────────────────
+function showConfirm(message, { title = "Confirmar", okLabel = "Confirmar", danger = true } = {}) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById("confirmOverlay");
+    document.getElementById("confirmTitle").textContent   = title;
+    document.getElementById("confirmMessage").textContent = message;
+    const okBtn     = document.getElementById("confirmOkBtn");
+    const cancelBtn = document.getElementById("confirmCancelBtn");
+    okBtn.textContent = okLabel;
+    okBtn.className   = danger ? "modal-btn danger" : "modal-btn confirm";
+    overlay.style.display = "flex";
+    function cleanup(result) {
+      overlay.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      overlay.removeEventListener("click", onBg);
+      resolve(result);
+    }
+    const onOk     = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBg     = e => { if (e.target === overlay) cleanup(false); };
+    okBtn.addEventListener("click",     onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    overlay.addEventListener("click",   onBg);
+  });
+}
+
 // ── pywebview ────────────────────────────────────────────────────────────────
 function pyReady() {
   return new Promise(resolve => {
@@ -563,7 +590,8 @@ function initDetailTabs() {
   document.getElementById("detailDeleteBtn")?.addEventListener("click", async () => {
     if (!detailItem) return;
     const label = detailItem.type === "folder" ? "pasta" : "arquivo";
-    if (!confirm(`Excluir ${label} "${detailItem.name}"? Esta ação não pode ser desfeita.`)) return;
+    const ok = await showConfirm(`Excluir ${label} "${detailItem.name}"?\nEsta ação moverá o item para a lixeira.`, { title: "Excluir item", okLabel: "Excluir" });
+    if (!ok) return;
     try {
       const res = await api().delete_item(detailItem.type, detailItem.id, detailItem.storage_path);
       if (res.ok) {
@@ -1033,7 +1061,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("navTrash")?.addEventListener("click", e => { e.preventDefault(); loadTrashView(); });
 
   document.getElementById("emptyTrashBtn")?.addEventListener("click", async () => {
-    if (!confirm("Esvaziar a lixeira? Esta ação não pode ser desfeita.")) return;
+    const ok = await showConfirm("Todos os itens serão excluídos permanentemente do sistema.\nEsta ação não pode ser desfeita.", { title: "Esvaziar lixeira", okLabel: "Esvaziar" });
+    if (!ok) return;
     await api().empty_trash();
     showToast("Lixeira esvaziada.", "ok");
     await loadTrashView();

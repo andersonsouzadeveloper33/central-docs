@@ -1,5 +1,5 @@
 #define MyAppName "Zynor Docs"
-#define MyAppVersion "1.0"
+#define MyAppVersion "2.0"
 #define MyAppPublisher "Zynor"
 #define MyAppExeName "ZynorDocs.exe"
 
@@ -31,19 +31,23 @@ Name: "resetconfig"; Description: "Reinstalar do zero (apaga configurações e e
 ; Executável principal
 Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-; config.json — gravado em %APPDATA%\ZynorDocs\ (pasta gravável pelo usuário)
-Source: "..\config.json"; DestDir: "{userappdata}\ZynorDocs"; Flags: onlyifdoesntexist uninsneveruninstall
-
 ; Ícone separado para atalhos
 Source: "..\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
+; Não copiamos mais config.json: o instalador é genérico (mesmo para todo
+; cliente) e o tenant_id é gravado em %APPDATA%\ZynorDocs\config.json pelo
+; próprio app, na tela de ativação de licença (license_activate).
+
 [Icons]
 ; Menu Iniciar
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"
+; AppUserModelID precisa bater com o registrado em SetCurrentProcessExplicitAppUserModelID
+; (app_new.py), senão o Windows pode voltar a agrupar/exibir o ícone errado na taskbar
+; quando o atalho é fixado (pin) antes da primeira execução.
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "ZynorDocs.App"
 Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 
 ; Área de Trabalho (opcional)
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon; AppUserModelID: "ZynorDocs.App"
 
 [Run]
 ; Abre o app ao fim da instalação (opcional)

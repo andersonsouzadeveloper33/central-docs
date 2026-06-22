@@ -15,27 +15,57 @@
 
 body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; overflow: hidden; }
 
-/* ── Login ────────────────────────────────────────────────────── */
+/* ── Login (split-screen: painel de marca + formulário) ─────────── */
 .login-screen {
   position: fixed; inset: 0; z-index: 500;
-  background: linear-gradient(135deg, #0f1729 0%, #1e3a5f 100%);
+  display: flex; align-items: stretch; justify-content: stretch;
+  background: var(--white);
+}
+
+.login-brand-panel {
+  position: relative; overflow: hidden;
+  flex: 0 0 42%; min-width: 320px;
+  background: linear-gradient(135deg, #1e3a5f 0%, var(--blue) 100%);
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px;
+}
+.brand-blob {
+  position: absolute; border-radius: 50%;
+  background: rgba(255,255,255,.08);
+}
+.brand-blob-1 { width: 340px; height: 340px; top: -120px; right: -100px; }
+.brand-blob-2 { width: 220px; height: 220px; top: 38%; right: -60px; background: rgba(255,255,255,.06); }
+.brand-blob-3 { width: 260px; height: 260px; bottom: -120px; left: -80px; }
+
+.brand-content { position: relative; z-index: 1; max-width: 340px; text-align: center; color: #fff; }
+.brand-icon {
+  width: 64px; height: 64px; margin: 0 auto 20px;
+  background: rgba(255,255,255,.14); border-radius: 16px;
   display: flex; align-items: center; justify-content: center;
 }
-.login-card {
-  background: #fff; border-radius: 18px; padding: 40px 44px;
-  width: 420px; box-shadow: 0 24px 64px rgba(0,0,0,.25);
+.brand-icon svg { width: 32px; height: 32px; }
+.brand-logo-img { max-width: 280px; max-height: 96px; object-fit: contain; margin: 0 auto 20px; display: block; }
+.brand-name { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+.brand-tagline { font-size: 14px; color: rgba(255,255,255,.82); margin-bottom: 24px; }
+.brand-divider { width: 44px; height: 2px; background: rgba(255,255,255,.3); margin: 0 auto 24px; }
+.brand-features { list-style: none; text-align: left; display: flex; flex-direction: column; gap: 14px; }
+.brand-features li { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: rgba(255,255,255,.92); }
+.brand-features li svg { width: 17px; height: 17px; flex-shrink: 0; color: rgba(255,255,255,.85); }
+
+.login-form-panel {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 40px; min-width: 0;
 }
-.login-logo {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 28px;
-}
-.login-logo .logo-icon {
-  width: 38px; height: 38px; background: var(--blue);
-  border-radius: 10px; display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 18px; color: #fff;
-}
-.login-logo .logo-text { font-size: 20px; font-weight: 700; color: var(--text); }
+.login-form-wrap { width: 100%; max-width: 360px; }
+.login-form-footer { font-size: 11.5px; color: var(--text-muted); text-align: center; margin-top: 28px; }
+
+.login-logo-img { width: 240px; height: 64px; object-fit: contain; object-position: left center; flex-shrink: 0; }
 .login-title { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
 .login-sub { font-size: 13.5px; color: var(--text-muted); margin-bottom: 28px; }
+
+@media (max-width: 760px) {
+  .login-brand-panel { display: none; }
+}
 
 .login-form { display: flex; flex-direction: column; gap: 18px; }
 .login-field { display: flex; flex-direction: column; gap: 6px; }
@@ -84,8 +114,23 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 .login-btn:hover { background: var(--blue-dark); }
 .login-btn:disabled { opacity: .6; cursor: not-allowed; }
 
+.login-btn-secondary {
+  width: 100%; padding: 13px; background: transparent; color: var(--text-muted);
+  border: none; font-size: 13.5px; font-weight: 600;
+  cursor: pointer; margin-top: 8px;
+}
+.login-btn-secondary:hover { color: var(--text); }
+
 /* ── Shell ───────────────────────────────────────── */
-.shell { display: flex; height: 100vh; width: 100vw; }
+.shell { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+.shell-body { display: flex; flex: 1; min-height: 0; }
+
+/* ── Banner offline ──────────────────────────────────── */
+.offline-banner {
+  flex: none;
+  background: #b45309; color: #fff; text-align: center;
+  font-size: 12.5px; font-weight: 600; padding: 6px 12px;
+}
 
 /* ── Sidebar ─────────────────────────────────────── */
 .sidebar {
@@ -102,7 +147,8 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 22px 20px 18px;
+  padding: 18px 14px;
+  min-height: 64px;
 }
 .logo-icon {
   width: 34px; height: 34px;
@@ -110,6 +156,11 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
   border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
   font-weight: 700; font-size: 16px; color: #fff;
+}
+.sidebar-logo-img {
+  width: 182px; height: 52px;
+  object-fit: contain; object-position: left center;
+  flex-shrink: 0;
 }
 .logo-text { color: #fff; font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
 
@@ -279,6 +330,29 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 }
 .home-folder-card svg { width: 48px; height: 48px; }
 .home-folder-label { font-size: 13px; font-weight: 600; color: var(--text); word-break: break-word; }
+
+.home-grid-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 48px 24px;
+  border: 1.5px dashed var(--border); border-radius: 14px;
+  background: var(--white);
+  grid-column: 1 / -1;
+}
+.home-grid-empty-icon {
+  width: 64px; height: 64px; border-radius: 16px;
+  background: #eff6ff; display: flex; align-items: center; justify-content: center;
+}
+.home-grid-empty-icon svg { width: 32px; height: 32px; color: #3b82f6; }
+.home-grid-empty h3 { font-size: 15px; font-weight: 700; color: var(--text); margin: 0; }
+.home-grid-empty p { font-size: 13px; color: var(--text-muted); margin: 0; text-align: center; max-width: 320px; }
+.home-grid-empty-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 16px; border-radius: 8px; border: none;
+  background: var(--blue); color: #fff; font-size: 13px; font-weight: 600;
+  cursor: pointer; margin-top: 4px;
+}
+.home-grid-empty-btn:hover { background: var(--blue-dark); }
+.home-grid-empty-btn svg { width: 15px; height: 15px; }
 
 /* Folder header */
 .folder-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -659,6 +733,70 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 .detail-btn.fav { border-color: #f59e0b; color: #f59e0b; }
 .detail-btn.fav:hover, .detail-btn.fav.active { background: #f59e0b; color: #fff; }
 
+/* ── Configurações ───────────────────────────────────────────────────── */
+.settings-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.settings-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 16px; border: none; background: transparent;
+  color: var(--text-muted); font-size: 13px; font-weight: 500;
+  cursor: pointer; border-bottom: 2px solid transparent;
+}
+.settings-tab svg { width: 15px; height: 15px; }
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+.settings-pane-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.settings-pane-bar h3 { font-size: 14px; font-weight: 600; color: var(--text); margin: 0; }
+
+.settings-table-wrap { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #fff; }
+.settings-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.settings-table thead { background: var(--bg); }
+.settings-table th { text-align: left; padding: 12px 16px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .03em; }
+.settings-table th:not(:first-child), .settings-table td:not(:first-child) { text-align: center; }
+.settings-table td:first-child, .settings-table th:first-child { text-align: left; }
+.settings-table td { padding: 11px 16px; border-top: 1px solid var(--border); color: var(--text); }
+.settings-table tbody tr:hover { background: var(--bg); }
+.settings-table .perm-yes { color: #16a34a; font-weight: 700; }
+.settings-table .perm-no  { color: #cbd5e1; }
+.settings-table .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.settings-table .row-actions button {
+  width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
+  background: #fff; cursor: pointer; color: var(--text-muted); font-size: 13px;
+}
+.settings-table .row-actions button:hover { background: var(--blue); color: #fff; border-color: var(--blue); }
+.settings-table .row-actions button.danger:hover { background: #ef4444; border-color: #ef4444; }
+.settings-table .row-actions button:disabled { opacity: .35; cursor: not-allowed; }
+.settings-table .row-actions button:disabled:hover { background: #fff; color: var(--text-muted); border-color: var(--border); }
+
+.group-perms { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.group-perm-opt { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+
+.company-info-card { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 4px 0; max-width: 480px; }
+.company-info-row { display: flex; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.company-info-row:last-child { border-bottom: none; }
+.company-info-row span { color: var(--text-muted); }
+.company-info-row strong { color: var(--text); }
+
+.logo-preview-box {
+  display: flex; align-items: center; gap: 18px;
+  border: 1px solid var(--border); border-radius: 10px; background: #fff;
+  padding: 18px; max-width: 720px;
+}
+.logo-preview-icon { width: 56px; height: 56px; border-radius: 10px; background: var(--bg); display: flex; align-items: center; justify-content: center; color: #cbd5e1; flex-shrink: 0; }
+.logo-preview-icon svg { width: 28px; height: 28px; }
+#logoPreviewImg { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
+.logo-preview-text p { margin: 0 0 4px; font-size: 13px; color: var(--text-muted); }
+.logo-preview-text small { display: block; font-size: 12px; color: var(--text-muted); opacity: .8; }
+
+.logo-actions { display: flex; gap: 10px; margin-top: 14px; }
+.btn-outline-danger {
+  padding: 9px 16px; border-radius: 8px; background: #fff; color: #ef4444;
+  border: 1px solid #ef4444; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-outline-danger:hover { background: #fef2f2; }
+.btn-success { padding: 9px 16px; border-radius: 8px; background: #22c55e; color: #fff; border: none; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn-success:hover { background: #16a34a; }
+
 /* ── Modal de confirmação customizado ──────────────────────────────────────── */
 .confirm-modal { max-width: 400px; }
 .confirm-message { font-size: 14px; color: var(--text); line-height: 1.5; }
@@ -738,10 +876,14 @@ body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); co
 
 /* ── Dropdown de usuário (sidebar) ───────────────────────────────────────── */
 .user-dropdown {
-  position: absolute; bottom: 70px; left: 10px; right: 10px;
+  position: absolute;
   background: #1e293b; border: 1px solid rgba(255,255,255,.1);
-  border-radius: 12px; box-shadow: 0 -8px 24px rgba(0,0,0,.3);
-  z-index: 400; overflow: hidden;
+  border-radius: 12px; z-index: 400; overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  min-width: 220px;
+}
+.user-dropdown-top {
+  top: calc(100% + 8px); right: 0; left: auto; bottom: auto;
 }
 .user-dd-header {
   display: flex; align-items: center; gap: 10px;

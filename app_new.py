@@ -3,7 +3,8 @@ Nova interface Zynor Docs — pywebview
 Processo separado; recebe tenant/user via env vars do app.py (CTk).
 Todas as regras de negócio espelham o app.py.
 """
-import os, sys, json, uuid, hashlib, shutil, tempfile
+import os, sys, json, uuid, hashlib, shutil, tempfile, socket
+from urllib.parse import urlparse
 import webview
 from supabase import create_client, Client
 
@@ -123,6 +124,13 @@ def _ui_dir() -> str:
         return os.path.join(sys._MEIPASS, "ui")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 
+def _icon_path() -> str:
+    """Mesma lógica de resolução do app.py (_resource): funciona tanto via
+    .py quanto via .exe (PyInstaller embute em _MEIPASS)."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "icon.ico")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+
 def _fmt_size(b) -> str:
     if b is None: return "—"
     b = int(b)
@@ -130,6 +138,40 @@ def _fmt_size(b) -> str:
         if b < 1024: return f"{b:.0f} {unit}" if unit == "B" else f"{b:.1f} {unit}"
         b /= 1024
     return f"{b:.1f} TB"
+
+def _trim_logo_whitespace(path: str):
+    """Remove a margem vazia/transparente em volta da arte real da logo,
+    para que o object-fit: contain do CSS não escale um canvas com muito
+    espaço sobrando (ex: PNG quadrado 256x256 com a marca pequena no centro)."""
+    try:
+        from PIL import Image, ImageChops
+        img = Image.open(path).convert("RGBA")
+        alpha = img.split()[3]
+        if alpha.getextrema()[0] < 250:
+            # tem pixels transparentes: usa só o canal alfa, binarizado para
+            # ignorar ruído residual (<=10) que algumas ferramentas deixam
+            # em pixels "vazios" (RGB ruidoso não entra nessa comparação)
+            mask = alpha.point(lambda p: 255 if p > 10 else 0)
+            bbox = mask.getbbox()
+        else:
+            # imagem totalmente opaca: compara com a cor do canto, com
+            # tolerância para anti-aliasing/ruído de compressão
+            bg = Image.new("RGB", img.size, img.convert("RGB").getpixel((0, 0)))
+            diff = ImageChops.difference(img.convert("RGB"), bg).convert("L")
+            diff = diff.point(lambda p: 255 if p > 12 else 0)
+            bbox = diff.getbbox()
+        print(f"[Logo] trim: original={img.size} bbox={bbox}")
+        if bbox and bbox != (0, 0, img.width, img.height):
+            img = img.crop(bbox)
+        if path.lower().endswith((".jpg", ".jpeg")):
+            flat = Image.new("RGB", img.size, (255, 255, 255))
+            flat.paste(img, mask=img.split()[3])
+            flat.save(path)
+        else:
+            img.save(path)
+        print(f"[Logo] trim: final={img.size}")
+    except Exception as e:
+        print(f"[Logo] trim falhou: {e}")
 
 def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -141,6 +183,61 @@ def _make_storage_path(parent_path: str, name: str, is_folder: bool = False) -> 
     if base:
         return f"{base}/{slug}/" if is_folder else f"{base}/{slug}"
     return f"{TENANT_ID}/{slug}/" if is_folder else f"{TENANT_ID}/{slug}"
+
+# ── Cache offline (fallback de leitura quando não há rede) ────────────────────
+OFFLINE = {"value": False}
+_SUPABASE_HOST = urlparse(SUPABASE_URL).hostname
+
+def _probe_online(timeout: float = 2.5) -> bool:
+    """Teste leve de conectividade: abre socket TCP no host do Supabase (sem autenticar)."""
+    try:
+        with socket.create_connection((_SUPABASE_HOST, 443), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+def _cache_dir() -> str:
+    path = os.path.join(_local_storage(), ".cache")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def _cache_filename(key: str) -> str:
+    """Chaves podem conter '/' (storage_path) — usa hash para um nome de arquivo seguro."""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json"
+
+def _cache_save(key: str, data):
+    try:
+        with open(os.path.join(_cache_dir(), _cache_filename(key)), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"[Cache] erro ao salvar {key}: {e}")
+
+def _cache_load(key: str, default):
+    try:
+        with open(os.path.join(_cache_dir(), _cache_filename(key)), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+_OFFLINE_WRITE_ERROR = "Sem conexão com a internet. Esta ação requer rede e será liberada quando você reconectar."
+
+def _require_online() -> dict | None:
+    """Retorna um erro padrão se estiver offline; None se pode prosseguir."""
+    if OFFLINE["value"]:
+        return {"ok": False, "error": _OFFLINE_WRITE_ERROR, "offline": True}
+    return None
+
+def _cached_query(key: str, fn, default):
+    """Executa fn(); se falhar (provável falta de rede), retorna o último resultado cacheado."""
+    try:
+        result = fn()
+        _cache_save(key, result)
+        OFFLINE["value"] = False
+        return result
+    except Exception as e:
+        print(f"[Offline] {key}: {e}")
+        OFFLINE["value"] = True
+        return _cache_load(key, default)
 
 # ── Audit log ─────────────────────────────────────────────────────────────────
 def _audit(action: str, target_type: str = None, target_name: str = None):
@@ -202,12 +299,13 @@ class Api:
     # ── Login / Sessão ────────────────────────────────────────────────────────
     def login(self, email: str, password: str) -> dict:
         global CURRENT_USER
+        pw_hash = _hash_password(password)
+        login_key = f"login_{TENANT_ID}_{email}"
         try:
             lic = self._license_validate()
             if not lic["ok"]:
                 return {"ok": False, "error": lic["error"]}
 
-            pw_hash = _hash_password(password)
             res = (sb.table("users")
                      .select("*")
                      .eq("tenant_id", TENANT_ID)
@@ -226,6 +324,7 @@ class Api:
                 "must_change_password": user.get("must_change_password", False),
             }
             self._save_email_history(email)
+            _cache_save(login_key, {"user": CURRENT_USER, "pw_hash": pw_hash})
             # limpa locks de sessões anteriores deste usuário (app fechado sem unlock)
             try:
                 sb.table("files").update({
@@ -233,10 +332,19 @@ class Api:
                 }).eq("tenant_id", TENANT_ID).eq("locked_name", user["name"]).execute()
             except Exception:
                 pass
+            OFFLINE["value"] = False
             _audit("login")
             return {"ok": True, "must_change_password": user.get("must_change_password", False)}
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            # falha de rede: tenta login offline com o último cache válido deste usuário
+            cached = _cache_load(login_key, None)
+            if cached and cached.get("pw_hash") == pw_hash:
+                CURRENT_USER = cached["user"]
+                OFFLINE["value"] = True
+                return {"ok": True, "must_change_password": False, "offline": True}
+            if cached:
+                return {"ok": False, "error": "Sem conexão e senha não confere com o último login salvo."}
+            return {"ok": False, "error": "Sem conexão com a internet. Conecte-se ao menos uma vez para habilitar o login offline."}
 
     def get_session(self) -> dict:
         # ao iniciar sessão herdada do pai, limpa locks de sessões mortas deste usuário
@@ -245,11 +353,21 @@ class Api:
                 sb.table("files").update({
                     "locked_by": None, "locked_name": None, "locked_at": None,
                 }).eq("tenant_id", TENANT_ID).eq("locked_name", CURRENT_USER["name"]).execute()
+                OFFLINE["value"] = False
             except Exception:
-                pass
+                OFFLINE["value"] = True
         return {"tenant_id": TENANT_ID, "user": CURRENT_USER}
 
+    def is_offline(self) -> bool:
+        return OFFLINE["value"]
+
+    def check_connectivity(self) -> bool:
+        """Sonda ativa de rede (chamada periodicamente pelo JS); atualiza e retorna o estado offline."""
+        OFFLINE["value"] = not _probe_online()
+        return OFFLINE["value"]
+
     def change_password(self, new_password: str) -> dict:
+        if (err := _require_online()): return err
         try:
             pw_hash = _hash_password(new_password)
             sb.table("users").update({
@@ -292,27 +410,23 @@ class Api:
                    "can_edit": False, "can_delete": False, "is_admin": False}
         if not CURRENT_USER.get("id"):
             return default
-        try:
+        def _fetch():
             ug = (sb.table("user_groups")
                     .select("group_id, groups(*)")
                     .eq("user_id", CURRENT_USER["id"])
                     .execute())
-            if ug.data:
-                return ug.data[0]["groups"]
-        except Exception:
-            pass
-        return default
+            return ug.data[0]["groups"] if ug.data else default
+        return _cached_query(f"permissions_{CURRENT_USER['id']}", _fetch, default)
 
     # ── Tenant info ───────────────────────────────────────────────────────────
     def get_tenant_info(self) -> dict:
-        try:
+        def _fetch():
             res = (sb.table("tenants")
                      .select("name, logo_path, slug")
                      .eq("id", TENANT_ID)
                      .execute())
             return res.data[0] if res.data else {}
-        except Exception:
-            return {}
+        return _cached_query(f"tenant_info_{TENANT_ID}", _fetch, {})
 
     # ── Pastas ────────────────────────────────────────────────────────────────
     def _get_trashed_paths(self) -> set:
@@ -325,53 +439,59 @@ class Api:
 
     def get_root_folders(self) -> list:
         if not TENANT_ID: return []
-        res = (sb.table("folders")
-                 .select("id, name, storage_path, parent_path")
-                 .eq("tenant_id", TENANT_ID)
-                 .eq("parent_path", "")
-                 .order("name")
-                 .execute())
-        trashed = self._get_trashed_paths()
-        return [f for f in (res.data or []) if f["storage_path"] not in trashed]
+        def _fetch():
+            res = (sb.table("folders")
+                     .select("id, name, storage_path, parent_path")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("parent_path", "")
+                     .order("name")
+                     .execute())
+            trashed = self._get_trashed_paths()
+            return [f for f in (res.data or []) if f["storage_path"] not in trashed]
+        return _cached_query(f"root_folders_{TENANT_ID}", _fetch, [])
 
     def get_subfolders(self, parent_path: str) -> list:
         if not TENANT_ID: return []
-        res = (sb.table("folders")
-                 .select("id, name, storage_path, parent_path")
-                 .eq("tenant_id", TENANT_ID)
-                 .eq("parent_path", parent_path)
-                 .order("name")
-                 .execute())
-        return res.data or []
+        def _fetch():
+            res = (sb.table("folders")
+                     .select("id, name, storage_path, parent_path")
+                     .eq("tenant_id", TENANT_ID)
+                     .eq("parent_path", parent_path)
+                     .order("name")
+                     .execute())
+            return res.data or []
+        return _cached_query(f"subfolders_{TENANT_ID}_{parent_path}", _fetch, [])
 
     def get_children(self, storage_path: str) -> list:
         if not TENANT_ID: return []
-        trashed = self._get_trashed_paths()
-        folders = (sb.table("folders")
-                     .select("id, name, storage_path, parent_path")
-                     .eq("tenant_id", TENANT_ID)
-                     .eq("parent_path", storage_path)
-                     .order("name")
-                     .execute()).data or []
-        files = (sb.table("files")
-                   .select("id, name, storage_path, size, created_at, locked_by, locked_name")
-                   .eq("tenant_id", TENANT_ID)
-                   .eq("parent_path", storage_path)
-                   .order("name")
-                   .execute()).data or []
+        def _fetch():
+            trashed = self._get_trashed_paths()
+            folders = (sb.table("folders")
+                         .select("id, name, storage_path, parent_path")
+                         .eq("tenant_id", TENANT_ID)
+                         .eq("parent_path", storage_path)
+                         .order("name")
+                         .execute()).data or []
+            files = (sb.table("files")
+                       .select("id, name, storage_path, size, created_at, locked_by, locked_name")
+                       .eq("tenant_id", TENANT_ID)
+                       .eq("parent_path", storage_path)
+                       .order("name")
+                       .execute()).data or []
 
-        result = [{"type": "folder", **f} for f in folders if f["storage_path"] not in trashed]
-        result += [{
-            "type":         "file",
-            "id":           f["id"],
-            "name":         f["name"],
-            "storage_path": f["storage_path"],
-            "size":         _fmt_size(self._real_size(f["id"], f["storage_path"], f.get("size"))),
-            "updated_at":   f.get("created_at") or "",
-            "locked_by":    f.get("locked_by"),
-            "locked_name":  f.get("locked_name"),
-        } for f in files if f["storage_path"] not in trashed]
-        return result
+            result = [{"type": "folder", **f} for f in folders if f["storage_path"] not in trashed]
+            result += [{
+                "type":         "file",
+                "id":           f["id"],
+                "name":         f["name"],
+                "storage_path": f["storage_path"],
+                "size":         _fmt_size(self._real_size(f["id"], f["storage_path"], f.get("size"))),
+                "updated_at":   f.get("created_at") or "",
+                "locked_by":    f.get("locked_by"),
+                "locked_name":  f.get("locked_name"),
+            } for f in files if f["storage_path"] not in trashed]
+            return result
+        return _cached_query(f"children_{TENANT_ID}_{storage_path}", _fetch, [])
 
     def _real_size(self, file_id: str, storage_path: str, current_size) -> int:
         """Busca tamanho real no R2 quando o banco tem 0/null; atualiza o banco."""
@@ -392,51 +512,57 @@ class Api:
 
     def get_folder_stats(self, storage_path: str) -> dict:
         if not TENANT_ID: return {}
-        files   = (sb.table("files").select("id, storage_path, size, created_at")
-                     .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
-                     .execute()).data or []
-        folders = (sb.table("folders").select("id")
-                     .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
-                     .execute()).data or []
-        total = sum(self._real_size(f["id"], f["storage_path"], f.get("size")) for f in files)
-
-        # data da última alteração: arquivo mais recente na pasta
-        last_change = None
-        if files:
-            dates = [f.get("created_at") for f in files if f.get("created_at")]
-            if dates:
-                last_change = max(dates)
-
-        return {
-            "file_count":   len(files),
-            "folder_count": len(folders),
-            "total_size":   _fmt_size(total),
-            "last_change":  last_change,
-        }
+        try:
+            files   = (sb.table("files").select("id, storage_path, size, created_at")
+                         .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
+                         .execute()).data or []
+            folders = (sb.table("folders").select("id")
+                         .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
+                         .execute()).data or []
+            total = sum(self._real_size(f["id"], f["storage_path"], f.get("size")) for f in files)
+            last_change = None
+            if files:
+                dates = [f.get("created_at") for f in files if f.get("created_at")]
+                if dates:
+                    last_change = max(dates)
+            return {
+                "file_count":   len(files),
+                "folder_count": len(folders),
+                "total_size":   _fmt_size(total),
+                "last_change":  last_change,
+            }
+        except Exception as e:
+            print(f"[stats] erro ao carregar stats da pasta: {e}")
+            return {"file_count": 0, "folder_count": 0, "total_size": "0 B", "last_change": None}
 
     def get_tenant_stats(self) -> dict:
         """Resumo global do tenant: total de arquivos, pastas, tamanho e última alteração."""
         if not TENANT_ID: return {}
-        trashed = self._get_trashed_paths()
-        files   = (sb.table("files").select("id, storage_path, size, created_at")
-                     .eq("tenant_id", TENANT_ID).execute()).data or []
-        folders = (sb.table("folders").select("id")
-                     .eq("tenant_id", TENANT_ID).execute()).data or []
-        files   = [f for f in files   if f["storage_path"] not in trashed]
-        total   = sum(f.get("size") or 0 for f in files)
-        last_change = None
-        if files:
-            dates = [f.get("created_at") for f in files if f.get("created_at")]
-            if dates:
-                last_change = max(dates)
-        return {
-            "file_count":   len(files),
-            "folder_count": len(folders),
-            "total_size":   _fmt_size(total),
-            "last_change":  last_change,
-        }
+        try:
+            trashed = self._get_trashed_paths()
+            files   = (sb.table("files").select("id, storage_path, size, created_at")
+                         .eq("tenant_id", TENANT_ID).execute()).data or []
+            folders = (sb.table("folders").select("id")
+                         .eq("tenant_id", TENANT_ID).execute()).data or []
+            files   = [f for f in files   if f["storage_path"] not in trashed]
+            total   = sum(f.get("size") or 0 for f in files)
+            last_change = None
+            if files:
+                dates = [f.get("created_at") for f in files if f.get("created_at")]
+                if dates:
+                    last_change = max(dates)
+            return {
+                "file_count":   len(files),
+                "folder_count": len(folders),
+                "total_size":   _fmt_size(total),
+                "last_change":  last_change,
+            }
+        except Exception as e:
+            print(f"[stats] erro ao carregar estatísticas: {e}")
+            return {"file_count": 0, "folder_count": 0, "total_size": "0 B", "last_change": None}
 
     def create_folder(self, name: str, parent_path: str) -> dict:
+        if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_create") and not perms.get("is_admin"):
@@ -457,6 +583,7 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def rename_folder(self, folder_id: str, new_name: str) -> dict:
+        if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_edit") and not perms.get("is_admin"):
@@ -493,6 +620,7 @@ class Api:
 
     # ── Arquivos ──────────────────────────────────────────────────────────────
     def create_file(self, name: str, parent_path: str) -> dict:
+        if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_create") and not perms.get("is_admin"):
@@ -533,6 +661,7 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def upload_file(self, filename: str, b64_data: str, parent_path: str) -> dict:
+        if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_create") and not perms.get("is_admin"):
@@ -640,6 +769,7 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def rename_file(self, file_id: str, new_name: str) -> dict:
+        if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_edit") and not perms.get("is_admin"):
@@ -659,6 +789,7 @@ class Api:
 
     def delete_item(self, item_type: str, item_id: str, storage_path: str) -> dict:
         """Move o item para a lixeira (soft delete). A exclusão real ocorre ao esvaziar a lixeira."""
+        if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_delete") and not perms.get("is_admin"):
@@ -689,6 +820,7 @@ class Api:
 
     # ── Trava de arquivo ──────────────────────────────────────────────────────
     def lock_file(self, file_id: str) -> dict:
+        if (err := _require_online()): return err
         try:
             res = sb.table("files").select("locked_by").eq("id", file_id).execute()
             if not res.data:
@@ -812,6 +944,7 @@ class Api:
             return []
 
     def create_user(self, name: str, email: str, password: str, group_id: str) -> dict:
+        if (err := _require_online()): return err
         try:
             res = sb.table("users").insert({
                 "name": name, "email": email,
@@ -827,6 +960,7 @@ class Api:
 
     def update_user(self, user_id: str, name: str, email: str,
                     password: str, group_id: str) -> dict:
+        if (err := _require_online()): return err
         try:
             data: dict = {}
             if name:     data["name"]  = name
@@ -843,6 +977,7 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def delete_user(self, user_id: str) -> dict:
+        if (err := _require_online()): return err
         try:
             res = sb.table("users").select("name").eq("id", user_id).execute()
             uname = res.data[0]["name"] if res.data else user_id
@@ -866,6 +1001,7 @@ class Api:
 
     def create_group(self, name: str, can_view: bool, can_create: bool,
                      can_edit: bool, can_delete: bool, is_admin: bool) -> dict:
+        if (err := _require_online()): return err
         try:
             res = sb.table("groups").insert({
                 "name": name, "tenant_id": TENANT_ID,
@@ -879,6 +1015,7 @@ class Api:
 
     def update_group(self, group_id: str, name: str, can_view: bool, can_create: bool,
                      can_edit: bool, can_delete: bool, is_admin: bool) -> dict:
+        if (err := _require_online()): return err
         try:
             sb.table("groups").update({
                 "name": name, "can_view": can_view, "can_create": can_create,
@@ -890,6 +1027,7 @@ class Api:
             return {"ok": False, "error": str(e)}
 
     def delete_group(self, group_id: str) -> dict:
+        if (err := _require_online()): return err
         try:
             res = sb.table("groups").select("name").eq("id", group_id).execute()
             gname = res.data[0]["name"] if res.data else group_id
@@ -898,6 +1036,88 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # ── Empresa (marca) ──────────────────────────────────────────────────────
+    def update_tenant_name(self, name: str) -> dict:
+        if (err := _require_online()): return err
+        perms = self.get_permissions()
+        if not perms.get("is_admin"):
+            return {"ok": False, "error": "Apenas administradores podem alterar a empresa."}
+        name = (name or "").strip()
+        if not name:
+            return {"ok": False, "error": "Informe um nome para a empresa."}
+        try:
+            sb.table("tenants").update({"name": name}).eq("id", TENANT_ID).execute()
+            _audit("editou", "empresa", name)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def upload_tenant_logo(self, filename: str, b64_data: str) -> dict:
+        if (err := _require_online()): return err
+        perms = self.get_permissions()
+        if not perms.get("is_admin"):
+            return {"ok": False, "error": "Apenas administradores podem alterar o logo."}
+        try:
+            import base64
+            ext = os.path.splitext(filename)[1].lower() or ".png"
+            if ext not in (".png", ".jpg", ".jpeg"):
+                return {"ok": False, "error": "Formato não suportado. Use PNG, JPG ou JPEG."}
+            data = base64.b64decode(b64_data)
+            logo_key = f"{TENANT_ID}/_branding/logo{ext}"
+
+            res = sb.table("tenants").select("logo_path").eq("id", TENANT_ID).execute()
+            old_logo = res.data[0].get("logo_path") if res.data else None
+            if old_logo and old_logo != logo_key:
+                try: _r2().delete_object(Bucket=CF_BUCKET, Key=old_logo)
+                except Exception: pass
+
+            tmp_path = os.path.join(tempfile.gettempdir(), f"zynor_logo_{TENANT_ID}{ext}")
+            try:
+                with open(tmp_path, "wb") as f:
+                    f.write(data)
+                _trim_logo_whitespace(tmp_path)
+                _r2().upload_file(tmp_path, CF_BUCKET, logo_key)
+            finally:
+                try: os.remove(tmp_path)
+                except: pass
+
+            sb.table("tenants").update({"logo_path": logo_key}).eq("id", TENANT_ID).execute()
+            _audit("alterou", "logo da empresa", filename)
+            return {"ok": True, "logo_path": logo_key}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def remove_tenant_logo(self) -> dict:
+        if (err := _require_online()): return err
+        perms = self.get_permissions()
+        if not perms.get("is_admin"):
+            return {"ok": False, "error": "Apenas administradores podem alterar o logo."}
+        try:
+            res = sb.table("tenants").select("logo_path").eq("id", TENANT_ID).execute()
+            logo_path = res.data[0].get("logo_path") if res.data else None
+            if logo_path:
+                try: _r2().delete_object(Bucket=CF_BUCKET, Key=logo_path)
+                except Exception: pass
+            sb.table("tenants").update({"logo_path": None}).eq("id", TENANT_ID).execute()
+            _audit("removeu", "logo da empresa", "")
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def get_tenant_logo_url(self) -> str:
+        try:
+            res = sb.table("tenants").select("logo_path").eq("id", TENANT_ID).execute()
+            logo_path = res.data[0].get("logo_path") if res.data else None
+            if not logo_path:
+                return ""
+            return _r2().generate_presigned_url(
+                "get_object",
+                Params={"Bucket": CF_BUCKET, "Key": logo_path},
+                ExpiresIn=3600,
+            )
+        except Exception:
+            return ""
 
     # ── Recentes ─────────────────────────────────────────────────────────────
     def get_recent_files(self) -> list:
@@ -1065,6 +1285,7 @@ class Api:
 
     def empty_trash(self) -> dict:
         """Exclui permanentemente todos os itens da lixeira do banco e do R2."""
+        if (err := _require_online()): return err
         try:
             items = self.get_trash()
             for item in items:
@@ -1098,6 +1319,7 @@ class Api:
 
     # ── Compartilhar (link temporário pré-assinado do R2) ────────────────────
     def share_file(self, storage_path: str, filename: str, expires_hours: int = 24) -> dict:
+        if (err := _require_online()): return err
         try:
             import mimetypes
             mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
@@ -1122,7 +1344,21 @@ class Api:
 
 
 # ── Abre a janela ─────────────────────────────────────────────────────────────
+def _fix_taskbar_identity():
+    """No Windows, rodando via python.exe (não congelado), a taskbar usa o
+    AppUserModelID do processo — que por padrão é o do interpretador — e
+    mostra o ícone do Python em vez do ícone da janela. Registrar um ID
+    próprio faz a taskbar tratar o app como um processo distinto."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ZynorDocs.App")
+    except Exception:
+        pass
+
 def open_window():
+    _fix_taskbar_identity()
     api   = Api()
     index = os.path.join(_ui_dir(), "index.html").replace(os.sep, "/")
     window = webview.create_window(
@@ -1133,7 +1369,9 @@ def open_window():
         height=800,
         min_size=(900, 600),
     )
-    webview.start(lambda: window.maximize(), debug=False)
+    icon_path = _icon_path()
+    webview.start(lambda: window.maximize(), debug=False,
+                  icon=icon_path if os.path.exists(icon_path) else None)
 
 if __name__ == "__main__":
     open_window()

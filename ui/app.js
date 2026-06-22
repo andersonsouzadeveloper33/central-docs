@@ -49,14 +49,79 @@ async function init() {
 
   // Se veio com sessão do processo pai (CTk), vai direto pro app
   const session = await api().get_session();
-  if (session.tenant_id && session.user?.id) {
+  if (!session.tenant_id) {
+    showActivation();
+    return;
+  }
+  await applySidebarLogo();
+  if (session.user?.id) {
     showApp();
     showHomeView();
     await loadSession();
     await loadSidebar();
+    await checkOffline();
+    startConnectivityWatcher();
   } else {
     showLogin();
   }
+}
+
+function showActivation() {
+  document.getElementById("activationScreen").style.display = "flex";
+  document.getElementById("loginScreen").style.display      = "none";
+  document.getElementById("appShell").style.display         = "none";
+  document.getElementById("activationCode").focus();
+}
+
+function initActivation() {
+  const btn   = document.getElementById("activationBtn");
+  const input = document.getElementById("activationCode");
+  const errEl = document.getElementById("activationError");
+
+  async function doActivate() {
+    const code = input.value.trim();
+    if (!code) { errEl.textContent = "Informe o código de ativação."; return; }
+    btn.disabled = true; btn.textContent = "Ativando..."; errEl.textContent = "";
+    try {
+      const res = await api().license_activate(code);
+      if (!res.ok) { errEl.textContent = res.error || "Código de ativação inválido."; return; }
+      document.getElementById("activationScreen").style.display = "none";
+      await applySidebarLogo();
+      showLogin();
+    } catch (e) {
+      errEl.textContent = "Erro ao ativar. Verifique sua conexão e tente novamente.";
+    } finally {
+      btn.disabled = false; btn.textContent = "Ativar";
+    }
+  }
+
+  btn.addEventListener("click", doActivate);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") doActivate(); });
+}
+
+async function checkOffline() {
+  const banner = document.getElementById("offlineBanner");
+  if (!banner) return;
+  const offline = await api().is_offline();
+  banner.style.display = offline ? "" : "none";
+}
+
+let _connectivityTimer = null;
+function startConnectivityWatcher() {
+  if (_connectivityTimer) return;
+  let wasOffline = false;
+  _connectivityTimer = setInterval(async () => {
+    const banner = document.getElementById("offlineBanner");
+    if (!banner) return;
+    const offline = await api().check_connectivity();
+    banner.style.display = offline ? "" : "none";
+    if (wasOffline && !offline) {
+      // voltou a conexão: recarrega a visão atual para refletir dados reais
+      await loadSidebar();
+      if (state.currentPath) await loadGrid(state.currentPath);
+    }
+    wasOffline = offline;
+  }, 6000);
 }
 
 function showLogin() {
@@ -71,7 +136,7 @@ function showApp() {
   document.getElementById("appShell").style.display       = "flex";
 }
 
-const ALL_VIEWS = ["homeView","folderView","recentView","favoritesView","sharedView","trashView"];
+const ALL_VIEWS = ["homeView","folderView","recentView","favoritesView","sharedView","trashView","settingsView"];
 
 function showView(id) {
   ALL_VIEWS.forEach(v => {
@@ -107,6 +172,8 @@ async function loadHomeDashboard() {
   set("hsTotalFolders", stats.folder_count ?? "—");
   set("hsTotalSize",    stats.total_size   ?? "—");
   set("hsLastChange",   stats.last_change  ? fmtDate(stats.last_change) : "—");
+  // reusa os stats já carregados para atualizar a barra de armazenamento
+  if (stats.total_size) updateStorageBar(stats);
 
   // ── Recentes ───────────────────────────────────────────────────────────────
   const recentSection = document.getElementById("homeRecentSection");
@@ -156,8 +223,9 @@ function initLogin() {
       const res = await api().login(e, p);
       if (!res.ok) { errEl.textContent = res.error || "Credenciais inválidas."; return; }
       if (res.must_change_password) {
-        document.getElementById("loginScreen").style.display    = "none";
-        document.getElementById("changePwScreen").style.display = "flex";
+        document.getElementById("loginScreen").style.display       = "none";
+        document.getElementById("changePwScreen").style.display    = "flex";
+        document.getElementById("changePwCancelBtn").style.display = "none";
         document.getElementById("newPw1").focus();
         return;
       }
@@ -165,6 +233,9 @@ function initLogin() {
       showHomeView();
       await loadSession();
       await loadSidebar();
+      await applySidebarLogo();
+      await checkOffline();
+      startConnectivityWatcher();
     } catch(e) {
       errEl.textContent = "Erro ao conectar. Tente novamente.";
     } finally {
@@ -255,6 +326,7 @@ async function loadSession() {
   try {
     const s = await api().get_session();
     if (!s.user?.name) return;
+    state.user = s.user;
     const initials = s.user.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
     document.querySelectorAll(".user-avatar").forEach(el => el.textContent = initials);
     document.querySelectorAll(".user-name").forEach(el => el.textContent = s.user.name);
@@ -262,14 +334,40 @@ async function loadSession() {
     const nt = document.getElementById("userNameTop");
     if (at) at.textContent = initials;
     if (nt) nt.textContent = s.user.name;
-    // atualiza dropdown sidebar e barra de armazenamento
+    // atualiza dropdown sidebar; badge de notificações com delay para não
+    // competir com as queries do dashboard na inicialização
     updateUserMenu(s);
-    updateStorageBar();
-    checkNotifBadge();
+    setTimeout(() => checkNotifBadge(), 2500);
   } catch(e) { console.warn("sem sessão:", e); }
 }
 
-// ── Sidebar ──────────────────────────────────────────────────────────────────
+// ── Logo da empresa (sidebar, login, troca de senha) ──────────────────────────
+function _applyLogoTo(url, iconId, imgId, textId) {
+  const icon = document.getElementById(iconId);
+  const img  = document.getElementById(imgId);
+  const text = document.getElementById(textId);
+  if (url) {
+    img.src = url;
+    img.style.display  = "";
+    if (icon) icon.style.display = "none";
+    if (text) text.style.display = "none";
+  } else {
+    img.style.display  = "none";
+    if (icon) icon.style.display = "";
+    if (text) text.style.display = "";
+  }
+}
+
+async function applySidebarLogo() {
+  let url = "";
+  try { url = await api().get_tenant_logo_url(); } catch (e) { /* sem logo */ }
+  _applyLogoTo(url, "sidebarLogoIcon", "sidebarLogoImg", null);
+  const sidebarText = document.querySelector(".sidebar-logo .logo-text");
+  if (sidebarText) sidebarText.style.display = url ? "none" : "";
+  _applyLogoTo(url, "loginLogoIcon", "loginLogoImg", "loginLogoText");
+  _applyLogoTo(url, "changePwLogoIcon", "changePwLogoImg", "changePwLogoText");
+}
+
 async function loadSidebar() {
   const tree = document.getElementById("folderTree");
   tree.innerHTML = '<div class="tree-loading">Carregando...</div>';
@@ -278,14 +376,11 @@ async function loadSidebar() {
     tree.innerHTML = "";
     if (!folders.length) {
       tree.innerHTML = '<div class="tree-empty">Nenhuma pasta</div>';
-      return;
+    } else {
+      folders.forEach(f => tree.appendChild(buildTreeNode(f, 0)));
     }
-    folders.forEach(f => tree.appendChild(buildTreeNode(f, 0)));
     await loadHomeGrid(folders);
-    // se estiver na home, recarrega o dashboard (stats/recentes/favoritos)
-    if (document.getElementById("homeView")?.style.display !== "none") {
-      loadHomeDashboard();
-    }
+    await checkOffline();
   } catch(e) {
     tree.innerHTML = `<div class="tree-empty">Erro ao carregar</div>`;
     console.error(e);
@@ -295,6 +390,24 @@ async function loadSidebar() {
 async function loadHomeGrid(folders) {
   const grid = document.getElementById("homeGrid");
   grid.innerHTML = "";
+
+  if (!folders.length) {
+    grid.innerHTML = `
+      <div class="home-grid-empty">
+        <div class="home-grid-empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <h3>Nenhuma pasta criada</h3>
+        <p>Organize seus documentos criando a primeira pasta. Você pode criar quantas quiser e estruturar do seu jeito.</p>
+        <button class="home-grid-empty-btn" id="homeGridEmptyBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Criar primeira pasta
+        </button>
+      </div>`;
+    document.getElementById("homeGridEmptyBtn").addEventListener("click", () => openModal("folder"));
+    return;
+  }
+
   folders.forEach(f => {
     const card = document.createElement("div");
     card.className = "home-folder-card";
@@ -617,8 +730,11 @@ async function loadGrid(path) {
   tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Carregando...</td></tr>';
   try {
     const items = await api().get_children(path);
+    await checkOffline();
+    const footer = document.querySelector(".file-list-footer");
     if (!items.length) {
       tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Pasta vazia</td></tr>';
+      if (footer) footer.textContent = "0 itens";
       return;
     }
     tbody.innerHTML = items.map(item => {
@@ -673,7 +789,6 @@ async function loadGrid(path) {
       });
     });
 
-    const footer = document.querySelector(".file-list-footer");
     if (footer) footer.textContent = `${items.length} ${items.length === 1 ? "item" : "itens"}`;
   } catch(e) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">Erro: ${e}</td></tr>`;
@@ -922,13 +1037,15 @@ async function confirmModal() {
 
   const parentPath = state.currentPath ?? "";
   try {
+    let res;
     if (modalMode === "folder") {
-      await api().create_folder(name, parentPath);
+      res = await api().create_folder(name, parentPath);
     } else {
       const ext      = document.querySelector("input[name='fileType']:checked")?.value || ".txt";
       const fullName = name.includes(".") ? name : name + ext;
-      await api().create_file(fullName, parentPath);
+      res = await api().create_file(fullName, parentPath);
     }
+    if (!res.ok) { errEl.textContent = res.error || "Erro ao criar."; return; }
     closeModal();
     if (parentPath === "") {
       // estamos na home — recarrega a grid de pastas raiz
@@ -983,6 +1100,8 @@ function initUpload() {
 
     overlay.classList.add("open");
     let done = 0;
+    let failed = 0;
+    let lastError = "";
 
     for (const file of files) {
       nameEl.textContent  = file.name;
@@ -991,8 +1110,10 @@ function initUpload() {
       try {
         // lê o arquivo como base64 e manda pro Python
         const b64 = await toBase64(file);
-        await api().upload_file(file.name, b64, state.currentPath);
+        const res = await api().upload_file(file.name, b64, state.currentPath);
+        if (!res.ok) { failed++; lastError = res.error || ""; }
       } catch(e) {
+        failed++;
         console.warn("upload error:", file.name, e);
       }
 
@@ -1007,7 +1128,11 @@ function initUpload() {
     barEl.style.width = "0%";
     await loadGrid(state.currentPath);
     await loadStats(state.currentPath);
-    showToast(`${done} arquivo(s) enviado(s) com sucesso!`);
+    if (failed) {
+      showToast(lastError || `${failed} arquivo(s) não puderam ser enviados.`, "warn");
+    } else {
+      showToast(`${done} arquivo(s) enviado(s) com sucesso!`);
+    }
   });
 }
 
@@ -1089,11 +1214,11 @@ async function checkNotifBadge() {
 
 // ── Menu de usuário (sidebar) ────────────────────────────────────────────────
 function initUserMenu() {
-  const card     = document.getElementById("userCard");
+  const trigger  = document.getElementById("userTopbar");
   const dropdown = document.getElementById("userDropdown");
-  if (!card) return;
+  if (!trigger) return;
 
-  card.addEventListener("click", e => {
+  trigger.addEventListener("click", e => {
     e.stopPropagation();
     const isOpen = dropdown.style.display !== "none";
     dropdown.style.display = isOpen ? "none" : "block";
@@ -1103,9 +1228,18 @@ function initUserMenu() {
   // Trocar senha — reutiliza a tela de change password
   document.getElementById("btnChangePw")?.addEventListener("click", () => {
     dropdown.style.display = "none";
-    document.getElementById("appShell").style.display        = "none";
-    document.getElementById("changePwScreen").style.display  = "flex";
+    document.getElementById("appShell").style.display          = "none";
+    document.getElementById("changePwScreen").style.display    = "flex";
+    document.getElementById("changePwCancelBtn").style.display = "";
     document.getElementById("newPw1").focus();
+  });
+
+  document.getElementById("changePwCancelBtn")?.addEventListener("click", () => {
+    document.getElementById("newPw1").value = "";
+    document.getElementById("newPw2").value = "";
+    document.getElementById("changePwError").textContent = "";
+    document.getElementById("changePwScreen").style.display = "none";
+    document.getElementById("appShell").style.display       = "flex";
   });
 
   // Sair
@@ -1132,20 +1266,19 @@ function updateUserMenu(session) {
   const roleMap  = { admin: "Administrador", user: "Usuário" };
 
   const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  setTxt("userAvatarSide", initials);
-  setTxt("userNameSide",   u.name  || "");
-  setTxt("userRoleSide",   roleMap[u.role] || u.role || "");
-  setTxt("userAvatarDd",   initials);
-  setTxt("userNameDd",     u.name  || "");
-  setTxt("userEmailDd",    u.email || "");
+  setTxt("userAvatarTop", initials);
+  setTxt("userNameTop",   u.name  || "");
+  setTxt("userAvatarDd",  initials);
+  setTxt("userNameDd",    u.name  || "");
+  setTxt("userEmailDd",   u.email || "");
 }
 
 // ── Armazenamento real na sidebar ────────────────────────────────────────────
 const PLAN_LIMIT_GB = 100;
 
-async function updateStorageBar() {
+async function updateStorageBar(stats) {
   try {
-    const stats  = await api().get_tenant_stats();
+    if (!stats) stats = await api().get_tenant_stats();
     const usedRaw = stats.total_size || "0 B";
     // converte para GB para calcular %
     const toBytes = s => {
@@ -1395,6 +1528,365 @@ async function restoreTrash(storage_path) {
   await loadSidebar();
 }
 
+// ── Configurações ─────────────────────────────────────────────────────────────
+let settingsState = { groups: [], editingUserId: null, editingGroupId: null };
+
+async function loadSettingsView() {
+  showView("settingsView");
+  setActiveNav("navConfig");
+
+  const perms = await api().get_permissions();
+  const restricted = document.getElementById("settingsRestricted");
+  const content     = document.getElementById("settingsContent");
+
+  if (!perms.is_admin) {
+    restricted.style.display = "";
+    content.style.display    = "none";
+    return;
+  }
+  restricted.style.display = "none";
+  content.style.display    = "";
+
+  switchSettingsTab("usuarios");
+}
+
+function switchSettingsTab(tab) {
+  document.querySelectorAll(".settings-tab").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.tab === tab);
+  });
+  document.getElementById("paneUsuarios").style.display = tab === "usuarios" ? "" : "none";
+  document.getElementById("paneGrupos").style.display   = tab === "grupos"   ? "" : "none";
+  document.getElementById("paneEmpresa").style.display  = tab === "empresa"  ? "" : "none";
+
+  if (tab === "usuarios") loadUsersTable();
+  else if (tab === "grupos") loadGroupsTable();
+  else if (tab === "empresa") loadEmpresaTab();
+}
+
+function initSettingsTabs() {
+  document.querySelectorAll(".settings-tab").forEach(btn => {
+    btn.addEventListener("click", () => switchSettingsTab(btn.dataset.tab));
+  });
+}
+
+// ── Usuários ───────────────────────────────────────────────────────────────
+async function loadUsersTable() {
+  const tbody = document.getElementById("usersTableBody");
+  tbody.innerHTML = `<tr><td colspan="4">Carregando...</td></tr>`;
+  const [users, groups] = await Promise.all([api().get_users(), api().get_groups()]);
+  settingsState.groups = groups;
+
+  if (!users.length) {
+    tbody.innerHTML = `<tr><td colspan="4">Nenhum usuário cadastrado.</td></tr>`;
+    return;
+  }
+  const selfId = state.user?.id;
+  tbody.innerHTML = users.map(u => `
+    <tr>
+      <td>${u.name}</td>
+      <td>${u.email}</td>
+      <td>${u.group_name || "Sem grupo"}</td>
+      <td>
+        <div class="row-actions">
+          <button title="Editar" onclick="openUserModal('${u.id}')">✏️</button>
+          <button title="Excluir" class="danger" ${u.id === selfId ? "disabled" : ""} onclick="deleteUserRow('${u.id}')">✕</button>
+        </div>
+      </td>
+    </tr>`).join("");
+}
+
+async function openUserModal(userId = null) {
+  if (!settingsState.groups.length) settingsState.groups = await api().get_groups();
+  const groups = settingsState.groups;
+  settingsState.editingUserId = userId;
+
+  let editing = null;
+  if (userId) {
+    const users = await api().get_users();
+    editing = users.find(u => u.id === userId) || null;
+  }
+
+  document.getElementById("userModalTitle").textContent = editing ? "Editar Usuário" : "Novo Usuário";
+  document.getElementById("userNameInput").value  = editing?.name  || "";
+  document.getElementById("userEmailInput").value = editing?.email || "";
+  document.getElementById("userPasswordInput").value  = "";
+  document.getElementById("userPassword2Input").value = "";
+  document.getElementById("userPasswordGroup").style.display = editing ? "none" : "";
+  document.getElementById("btnChangeUserPw").style.display   = editing ? "" : "none";
+  document.getElementById("userModalError").textContent = "";
+
+  const select = document.getElementById("userGroupSelect");
+  select.innerHTML = groups.map(g => `<option value="${g.id}">${g.name}</option>`).join("");
+  if (editing?.group_id) select.value = editing.group_id;
+
+  document.getElementById("userModalOverlay").style.display = "flex";
+}
+
+function closeUserModal() {
+  document.getElementById("userModalOverlay").style.display = "none";
+  settingsState.editingUserId = null;
+}
+
+async function saveUserModal() {
+  const name  = document.getElementById("userNameInput").value.trim();
+  const email = document.getElementById("userEmailInput").value.trim();
+  const groupId = document.getElementById("userGroupSelect").value;
+  const errEl = document.getElementById("userModalError");
+
+  if (!name || !email) { errEl.textContent = "Nome e e-mail são obrigatórios."; return; }
+  if (!groupId) { errEl.textContent = "Selecione um grupo."; return; }
+
+  const editingId = settingsState.editingUserId;
+  let res;
+  if (editingId) {
+    res = await api().update_user(editingId, name, email, null, groupId);
+  } else {
+    const pwd  = document.getElementById("userPasswordInput").value;
+    const pwd2 = document.getElementById("userPassword2Input").value;
+    if (!pwd) { errEl.textContent = "Informe uma senha."; return; }
+    if (pwd !== pwd2) { errEl.textContent = "As senhas não coincidem."; return; }
+    res = await api().create_user(name, email, pwd, groupId);
+  }
+
+  if (!res.ok) { errEl.textContent = res.error || "Erro ao salvar usuário."; return; }
+  closeUserModal();
+  showToast(editingId ? "Usuário atualizado." : "Usuário criado.", "ok");
+  await loadUsersTable();
+}
+
+async function deleteUserRow(userId) {
+  const ok = await showConfirm("Deseja remover este usuário? Esta ação não pode ser desfeita.", { title: "Excluir usuário", okLabel: "Excluir" });
+  if (!ok) return;
+  const res = await api().delete_user(userId);
+  if (!res.ok) { showToast(res.error || "Erro ao excluir usuário.", "error"); return; }
+  showToast("Usuário excluído.", "ok");
+  await loadUsersTable();
+}
+
+function openUserPwModal() {
+  document.getElementById("userPwNew1").value = "";
+  document.getElementById("userPwNew2").value = "";
+  document.getElementById("userPwModalError").textContent = "";
+  document.getElementById("userPwModalOverlay").style.display = "flex";
+}
+
+function closeUserPwModal() {
+  document.getElementById("userPwModalOverlay").style.display = "none";
+}
+
+async function saveUserPwModal() {
+  const pwd  = document.getElementById("userPwNew1").value;
+  const pwd2 = document.getElementById("userPwNew2").value;
+  const errEl = document.getElementById("userPwModalError");
+  if (!pwd) { errEl.textContent = "Informe a nova senha."; return; }
+  if (pwd !== pwd2) { errEl.textContent = "As senhas não coincidem."; return; }
+
+  const res = await api().update_user(settingsState.editingUserId, null, null, pwd, null);
+  if (!res.ok) { errEl.textContent = res.error || "Erro ao alterar senha."; return; }
+  closeUserPwModal();
+  showToast("Senha alterada com sucesso.", "ok");
+}
+
+// ── Grupos ─────────────────────────────────────────────────────────────────
+async function loadGroupsTable() {
+  const tbody = document.getElementById("groupsTableBody");
+  tbody.innerHTML = `<tr><td colspan="7">Carregando...</td></tr>`;
+  const groups = await api().get_groups();
+  settingsState.groups = groups;
+
+  if (!groups.length) {
+    tbody.innerHTML = `<tr><td colspan="7">Nenhum grupo cadastrado.</td></tr>`;
+    return;
+  }
+  const flag = v => v ? `<span class="perm-yes">✓</span>` : `<span class="perm-no">—</span>`;
+  tbody.innerHTML = groups.map(g => `
+    <tr>
+      <td><strong>${g.name}</strong></td>
+      <td>${flag(g.can_view)}</td>
+      <td>${flag(g.can_create)}</td>
+      <td>${flag(g.can_edit)}</td>
+      <td>${flag(g.can_delete)}</td>
+      <td>${flag(g.is_admin)}</td>
+      <td>
+        <div class="row-actions">
+          <button title="Editar" onclick="openGroupModal('${g.id}')">✏️</button>
+          <button title="Excluir" class="danger" onclick="deleteGroupRow('${g.id}')">✕</button>
+        </div>
+      </td>
+    </tr>`).join("");
+}
+
+async function openGroupModal(groupId = null) {
+  settingsState.editingGroupId = groupId;
+  let editing = null;
+  if (groupId) {
+    const groups = settingsState.groups.length ? settingsState.groups : await api().get_groups();
+    editing = groups.find(g => g.id === groupId) || null;
+  }
+
+  document.getElementById("groupModalTitle").textContent = editing ? "Editar Grupo" : "Novo Grupo";
+  document.getElementById("groupNameInput").value = editing?.name || "";
+  document.getElementById("permCanView").checked   = !!editing?.can_view;
+  document.getElementById("permCanCreate").checked = !!editing?.can_create;
+  document.getElementById("permCanEdit").checked   = !!editing?.can_edit;
+  document.getElementById("permCanDelete").checked = !!editing?.can_delete;
+  document.getElementById("permIsAdmin").checked   = !!editing?.is_admin;
+  document.getElementById("groupModalError").textContent = "";
+
+  document.getElementById("groupModalOverlay").style.display = "flex";
+}
+
+function closeGroupModal() {
+  document.getElementById("groupModalOverlay").style.display = "none";
+  settingsState.editingGroupId = null;
+}
+
+async function saveGroupModal() {
+  const name = document.getElementById("groupNameInput").value.trim();
+  const errEl = document.getElementById("groupModalError");
+  if (!name) { errEl.textContent = "Informe um nome para o grupo."; return; }
+
+  const perms = {
+    can_view:   document.getElementById("permCanView").checked,
+    can_create: document.getElementById("permCanCreate").checked,
+    can_edit:   document.getElementById("permCanEdit").checked,
+    can_delete: document.getElementById("permCanDelete").checked,
+    is_admin:   document.getElementById("permIsAdmin").checked,
+  };
+
+  const editingId = settingsState.editingGroupId;
+  const res = editingId
+    ? await api().update_group(editingId, name, perms.can_view, perms.can_create, perms.can_edit, perms.can_delete, perms.is_admin)
+    : await api().create_group(name, perms.can_view, perms.can_create, perms.can_edit, perms.can_delete, perms.is_admin);
+
+  if (!res.ok) { errEl.textContent = res.error || "Erro ao salvar grupo."; return; }
+  closeGroupModal();
+  showToast(editingId ? "Grupo atualizado." : "Grupo criado.", "ok");
+  await loadGroupsTable();
+}
+
+async function deleteGroupRow(groupId) {
+  const ok = await showConfirm("Deseja remover este grupo? Os usuários deste grupo ficarão sem grupo.", { title: "Excluir grupo", okLabel: "Excluir" });
+  if (!ok) return;
+  const res = await api().delete_group(groupId);
+  if (!res.ok) { showToast(res.error || "Erro ao excluir grupo.", "error"); return; }
+  showToast("Grupo excluído.", "ok");
+  await loadGroupsTable();
+}
+
+// ── Empresa ──────────────────────────────────────────────────────────────────
+async function loadEmpresaTab() {
+  const info = await api().get_tenant_info();
+  document.getElementById("companyNameInput").value = info.name || "";
+  document.getElementById("companyError").textContent = "";
+  await refreshLogoPreview();
+}
+
+async function refreshLogoPreview() {
+  const img  = document.getElementById("logoPreviewImg");
+  const icon = document.getElementById("logoPreviewIcon");
+  const msg  = document.getElementById("logoPreviewMsg");
+  try {
+    const url = await api().get_tenant_logo_url();
+    if (url) {
+      img.src = url;
+      img.style.display  = "";
+      icon.style.display = "none";
+      msg.textContent = "Logo cadastrada.";
+    } else {
+      img.style.display  = "none";
+      icon.style.display = "";
+      msg.textContent = "Nenhuma logo cadastrada.";
+    }
+  } catch (e) {
+    img.style.display  = "none";
+    icon.style.display = "";
+    msg.textContent = "Nenhuma logo cadastrada.";
+  }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function initEmpresaTab() {
+  const fileInput = document.getElementById("logoFileInput");
+
+  document.getElementById("btnChooseLogo")?.addEventListener("click", () => fileInput.click());
+
+  fileInput?.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const errEl = document.getElementById("companyError");
+    errEl.textContent = "";
+    try {
+      const b64 = await fileToBase64(file);
+      const res = await api().upload_tenant_logo(file.name, b64);
+      if (!res.ok) { showToast(res.error || "Erro ao enviar logo.", "error"); return; }
+      showToast("Logo atualizada.", "ok");
+      await refreshLogoPreview();
+      await applySidebarLogo();
+    } catch (e) {
+      showToast("Erro ao enviar logo.", "error");
+    } finally {
+      fileInput.value = "";
+    }
+  });
+
+  document.getElementById("btnRemoveLogo")?.addEventListener("click", async () => {
+    const ok = await showConfirm("Remover a logo da empresa?", { title: "Remover Logo", okLabel: "Remover" });
+    if (!ok) return;
+    const res = await api().remove_tenant_logo();
+    if (!res.ok) { showToast(res.error || "Erro ao remover logo.", "error"); return; }
+    showToast("Logo removida.", "ok");
+    await refreshLogoPreview();
+    await applySidebarLogo();
+  });
+
+  document.getElementById("btnSaveCompanyName")?.addEventListener("click", async () => {
+    const name = document.getElementById("companyNameInput").value.trim();
+    const errEl = document.getElementById("companyError");
+    errEl.textContent = "";
+    const res = await api().update_tenant_name(name);
+    if (!res.ok) { errEl.textContent = res.error || "Erro ao salvar nome."; return; }
+    showToast("Nome da empresa atualizado.", "ok");
+  });
+}
+
+function initSettingsModals() {
+  initSettingsTabs();
+  initEmpresaTab();
+
+  document.getElementById("btnNewUser")?.addEventListener("click", () => openUserModal());
+  document.getElementById("userModalClose")?.addEventListener("click", closeUserModal);
+  document.getElementById("userModalCancel")?.addEventListener("click", closeUserModal);
+  document.getElementById("userModalSave")?.addEventListener("click", saveUserModal);
+  document.getElementById("btnChangeUserPw")?.addEventListener("click", openUserPwModal);
+  document.getElementById("userModalOverlay")?.addEventListener("click", e => {
+    if (e.target.id === "userModalOverlay") closeUserModal();
+  });
+
+  document.getElementById("userPwModalClose")?.addEventListener("click", closeUserPwModal);
+  document.getElementById("userPwModalCancel")?.addEventListener("click", closeUserPwModal);
+  document.getElementById("userPwModalSave")?.addEventListener("click", saveUserPwModal);
+  document.getElementById("userPwModalOverlay")?.addEventListener("click", e => {
+    if (e.target.id === "userPwModalOverlay") closeUserPwModal();
+  });
+
+  document.getElementById("btnNewGroup")?.addEventListener("click", () => openGroupModal());
+  document.getElementById("groupModalClose")?.addEventListener("click", closeGroupModal);
+  document.getElementById("groupModalCancel")?.addEventListener("click", closeGroupModal);
+  document.getElementById("groupModalSave")?.addEventListener("click", saveGroupModal);
+  document.getElementById("groupModalOverlay")?.addEventListener("click", e => {
+    if (e.target.id === "groupModalOverlay") closeGroupModal();
+  });
+}
+
 // ── Botão Favoritar no painel de detalhes ─────────────────────────────────────
 function initFavoriteBtn() {
   document.getElementById("detailFavBtn")?.addEventListener("click", async () => {
@@ -1414,6 +1906,7 @@ function initFavoriteBtn() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  initActivation();
   initLogin();
   initChangePw();
   initSearch();
@@ -1426,6 +1919,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initNotifications();
   initUserMenu();
   initPlanModal();
+  initSettingsModals();
 
   // nav clicks
   document.getElementById("navDocumentos")?.addEventListener("click", e => { e.preventDefault(); showHomeView(); });
@@ -1433,6 +1927,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("navFavorites")?.addEventListener("click", e => { e.preventDefault(); loadFavoritesView(); });
   document.getElementById("navShared")?.addEventListener("click", e => { e.preventDefault(); loadSharedView(); });
   document.getElementById("navTrash")?.addEventListener("click", e => { e.preventDefault(); loadTrashView(); });
+  document.getElementById("navConfig")?.addEventListener("click", e => { e.preventDefault(); loadSettingsView(); });
 
   document.getElementById("emptyTrashBtn")?.addEventListener("click", async () => {
     const ok = await showConfirm("Todos os itens serão excluídos permanentemente do sistema.\nEsta ação não pode ser desfeita.", { title: "Esvaziar lixeira", okLabel: "Esvaziar" });

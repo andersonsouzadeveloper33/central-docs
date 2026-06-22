@@ -8,71 +8,152 @@
 </head>
 <body>
 
+  <!-- ── Ativação de licença (primeira execução, sem tenant configurado) ──── -->
+  <div class="login-screen" id="activationScreen" style="display:none">
+    <div class="login-brand-panel">
+      <div class="brand-blob brand-blob-1"></div>
+      <div class="brand-blob brand-blob-2"></div>
+      <div class="brand-blob brand-blob-3"></div>
+      <div class="brand-content">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <h1 class="brand-name">Zynor Docs</h1>
+        <p class="brand-tagline">Gestão de Documentos para empresas</p>
+        <div class="brand-divider"></div>
+        <ul class="brand-features">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Ativação segura por licença</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Documentos organizados na nuvem</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Permissões por usuário e grupo</li>
+        </ul>
+      </div>
+    </div>
+    <div class="login-form-panel">
+      <div class="login-form-wrap">
+        <h2 class="login-title">Ativação</h2>
+        <p class="login-sub">Digite o código de ativação fornecido pelo suporte</p>
+
+        <div class="login-form">
+          <div class="login-field">
+            <label>Código de ativação</label>
+            <input id="activationCode" type="text" placeholder="XXXX-XXXX-XXXX" autocomplete="off" />
+          </div>
+          <p class="login-error" id="activationError"></p>
+          <button class="login-btn" id="activationBtn">Ativar</button>
+        </div>
+        <p class="login-form-footer">© 2026 Zynor Docs — Gestão de Documentos</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Tela de Login ───────────────────────────────────────────────────── -->
   <div class="login-screen" id="loginScreen">
-    <div class="login-card">
-      <div class="login-logo">
-        <div class="logo-icon">Z</div>
-        <span class="logo-text">Zynor Docs</span>
+    <div class="login-brand-panel">
+      <div class="brand-blob brand-blob-1"></div>
+      <div class="brand-blob brand-blob-2"></div>
+      <div class="brand-blob brand-blob-3"></div>
+      <div class="brand-content">
+        <div class="brand-icon" id="loginLogoIcon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <img class="brand-logo-img" id="loginLogoImg" style="display:none" />
+        <h1 class="brand-name" id="loginLogoText">Zynor Docs</h1>
+        <p class="brand-tagline">Gestão de Documentos para empresas</p>
+        <div class="brand-divider"></div>
+        <ul class="brand-features">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Documentos organizados na nuvem</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Permissões por usuário e grupo</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Acesso seguro e auditado</li>
+        </ul>
       </div>
-      <h2 class="login-title">Bem-vindo de volta</h2>
-      <p class="login-sub">Faça login para acessar seus documentos</p>
+    </div>
+    <div class="login-form-panel">
+      <div class="login-form-wrap">
+        <h2 class="login-title">Bem-vindo de volta</h2>
+        <p class="login-sub">Faça login para acessar seus documentos</p>
 
-      <div class="login-form">
-        <div class="login-field">
-          <label>E-mail</label>
-          <div class="email-wrap">
-            <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="off" />
-            <div class="email-history" id="emailHistory"></div>
+        <div class="login-form">
+          <div class="login-field">
+            <label>E-mail</label>
+            <div class="email-wrap">
+              <input id="loginEmail" type="email" placeholder="seu@email.com" autocomplete="off" />
+              <div class="email-history" id="emailHistory"></div>
+            </div>
           </div>
-        </div>
-        <div class="login-field">
-          <label>Senha</label>
-          <div class="pw-wrap">
-            <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" />
-            <button class="pw-toggle" id="pwToggle" tabindex="-1">
-              <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-            </button>
+          <div class="login-field">
+            <label>Senha</label>
+            <div class="pw-wrap">
+              <input id="loginPassword" type="password" placeholder="••••••••" autocomplete="current-password" />
+              <button class="pw-toggle" id="pwToggle" tabindex="-1">
+                <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </button>
+            </div>
           </div>
+          <p class="login-error" id="loginError"></p>
+          <button class="login-btn" id="loginBtn">Entrar</button>
         </div>
-        <p class="login-error" id="loginError"></p>
-        <button class="login-btn" id="loginBtn">Entrar</button>
+        <p class="login-form-footer">© 2026 Zynor Docs — Gestão de Documentos</p>
       </div>
     </div>
   </div>
 
   <!-- ── Troca de Senha (primeiro acesso) ────────────────────────────────── -->
   <div class="login-screen" id="changePwScreen" style="display:none">
-    <div class="login-card">
-      <div class="login-logo">
-        <div class="logo-icon">Z</div>
-        <span class="logo-text">Zynor Docs</span>
+    <div class="login-brand-panel">
+      <div class="brand-blob brand-blob-1"></div>
+      <div class="brand-blob brand-blob-2"></div>
+      <div class="brand-blob brand-blob-3"></div>
+      <div class="brand-content">
+        <div class="brand-icon" id="changePwLogoIcon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <img class="brand-logo-img" id="changePwLogoImg" style="display:none" />
+        <h1 class="brand-name" id="changePwLogoText">Zynor Docs</h1>
+        <p class="brand-tagline">Gestão de Documentos para empresas</p>
+        <div class="brand-divider"></div>
+        <ul class="brand-features">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Crie uma senha forte e exclusiva</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Seus documentos continuam protegidos</li>
+        </ul>
       </div>
-      <h2 class="login-title">Defina sua senha</h2>
-      <p class="login-sub">Por segurança, crie uma nova senha para continuar</p>
+    </div>
+    <div class="login-form-panel">
+      <div class="login-form-wrap">
+        <h2 class="login-title">Defina sua senha</h2>
+        <p class="login-sub">Por segurança, crie uma nova senha para continuar</p>
 
-      <div class="login-form">
-        <div class="login-field">
-          <label>Nova senha</label>
-          <input id="newPw1" type="password" placeholder="••••••••" />
+        <div class="login-form">
+          <div class="login-field">
+            <label>Nova senha</label>
+            <input id="newPw1" type="password" placeholder="••••••••" />
+          </div>
+          <div class="login-field">
+            <label>Confirmar senha</label>
+            <input id="newPw2" type="password" placeholder="••••••••" />
+          </div>
+          <p class="login-error" id="changePwError"></p>
+          <button class="login-btn" id="changePwBtn">Salvar e entrar</button>
+          <button class="login-btn-secondary" id="changePwCancelBtn" style="display:none">Cancelar</button>
         </div>
-        <div class="login-field">
-          <label>Confirmar senha</label>
-          <input id="newPw2" type="password" placeholder="••••••••" />
-        </div>
-        <p class="login-error" id="changePwError"></p>
-        <button class="login-btn" id="changePwBtn">Salvar e entrar</button>
+        <p class="login-form-footer">© 2026 Zynor Docs — Gestão de Documentos</p>
       </div>
     </div>
   </div>
 
   <div class="shell" id="appShell" style="display:none">
 
+    <div class="offline-banner" id="offlineBanner" style="display:none">
+      Sem conexão — exibindo dados salvos localmente. Alterações podem não ser sincronizadas.
+    </div>
+
+    <div class="shell-body">
+
     <!-- ── Sidebar ─────────────────────────────────────────────── -->
     <aside class="sidebar">
       <div class="sidebar-logo">
-        <div class="logo-icon">Z</div>
+        <div class="logo-icon" id="sidebarLogoIcon">Z</div>
+        <img class="sidebar-logo-img" id="sidebarLogoImg" style="display:none" />
         <span class="logo-text">Zynor</span>
       </div>
 
@@ -97,6 +178,10 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           Lixeira
         </a>
+        <a href="#" class="nav-item" id="navConfig">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Configurações
+        </a>
       </nav>
 
       <div class="sidebar-section-title">MINHAS PASTAS</div>
@@ -114,35 +199,6 @@
         </div>
         <button class="btn-manage-plan" id="btnManagePlan">Gerenciar planos</button>
 
-        <div class="user-card" id="userCard">
-          <div class="user-avatar" id="userAvatarSide">AS</div>
-          <div class="user-info">
-            <span class="user-name" id="userNameSide">Anderson Souza</span>
-            <span class="user-role" id="userRoleSide">Administrador</span>
-          </div>
-          <svg class="user-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-
-        <!-- Dropdown do usuário -->
-        <div class="user-dropdown" id="userDropdown" style="display:none">
-          <div class="user-dd-header">
-            <div class="user-avatar" id="userAvatarDd">AS</div>
-            <div>
-              <div class="user-dd-name" id="userNameDd">Anderson Souza</div>
-              <div class="user-dd-email" id="userEmailDd">—</div>
-            </div>
-          </div>
-          <div class="user-dd-sep"></div>
-          <button class="user-dd-item" id="btnChangePw">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            Trocar senha
-          </button>
-          <div class="user-dd-sep"></div>
-          <button class="user-dd-item danger" id="btnLogout">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            Sair
-          </button>
-        </div>
       </div>
     </aside>
 
@@ -168,10 +224,30 @@
           </div>
 
           <!-- Menu usuário (topbar) -->
-          <div class="user-top" id="userTopbar">
+          <div class="user-top" id="userTopbar" style="position:relative">
             <div class="user-avatar-sm" id="userAvatarTop">AS</div>
             <span class="user-name" id="userNameTop">Anderson Souza</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            <!-- Dropdown do usuário -->
+            <div class="user-dropdown user-dropdown-top" id="userDropdown" style="display:none">
+              <div class="user-dd-header">
+                <div class="user-avatar" id="userAvatarDd">AS</div>
+                <div>
+                  <div class="user-dd-name" id="userNameDd">Anderson Souza</div>
+                  <div class="user-dd-email" id="userEmailDd">—</div>
+                </div>
+              </div>
+              <div class="user-dd-sep"></div>
+              <button class="user-dd-item" id="btnChangePw">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Trocar senha
+              </button>
+              <div class="user-dd-sep"></div>
+              <button class="user-dd-item danger" id="btnLogout">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Sair
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -293,6 +369,90 @@
             <button class="btn-danger" id="emptyTrashBtn">Esvaziar lixeira</button>
           </div>
           <div class="flat-list" id="trashList"></div>
+        </div>
+
+        <!-- ── CONFIGURAÇÕES ── -->
+        <div id="settingsView" style="display:none">
+          <div class="home-header">
+            <div><h1 class="home-title">Configurações</h1><p class="home-sub">Gerencie usuários, grupos e dados da empresa</p></div>
+          </div>
+
+          <div id="settingsRestricted" style="display:none">
+            <p class="flat-empty">⛔ Acesso restrito a administradores.</p>
+          </div>
+
+          <div id="settingsContent" style="display:none">
+            <div class="settings-tabs">
+              <button class="settings-tab active" id="tabUsuarios" data-tab="usuarios">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Usuários
+              </button>
+              <button class="settings-tab" id="tabGrupos" data-tab="grupos">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11V5a2 2 0 0 0-2-2h-6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2z"/><circle cx="7" cy="17" r="3"/><path d="M12.5 16a3 3 0 0 1 4.5 2.6"/></svg>
+                Grupos
+              </button>
+              <button class="settings-tab" id="tabEmpresa" data-tab="empresa">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>
+                Empresa
+              </button>
+            </div>
+
+            <!-- Usuários -->
+            <div class="settings-pane" id="paneUsuarios">
+              <div class="settings-pane-bar">
+                <h3>Usuários do sistema</h3>
+                <button class="btn-primary" id="btnNewUser">+ Novo Usuário</button>
+              </div>
+              <div class="settings-table-wrap">
+                <table class="settings-table">
+                  <thead><tr><th>Nome</th><th>E-mail</th><th>Grupo</th><th></th></tr></thead>
+                  <tbody id="usersTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Grupos -->
+            <div class="settings-pane" id="paneGrupos" style="display:none">
+              <div class="settings-pane-bar">
+                <h3>Grupos e permissões</h3>
+                <button class="btn-primary" id="btnNewGroup">+ Novo Grupo</button>
+              </div>
+              <div class="settings-table-wrap">
+                <table class="settings-table">
+                  <thead><tr><th>Grupo</th><th>Visualizar</th><th>Criar</th><th>Editar</th><th>Excluir</th><th>Admin</th><th></th></tr></thead>
+                  <tbody id="groupsTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Empresa -->
+            <div class="settings-pane" id="paneEmpresa" style="display:none">
+              <div class="settings-pane-bar"><h3>Identidade da Empresa</h3></div>
+
+              <div class="logo-preview-box">
+                <div class="logo-preview-icon" id="logoPreviewIcon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 21h18"/><path d="M5 21V7l8-4v18"/><path d="M19 21V11l-6-4"/></svg>
+                </div>
+                <img id="logoPreviewImg" style="display:none" />
+                <div class="logo-preview-text">
+                  <p id="logoPreviewMsg">Nenhuma logo cadastrada.</p>
+                  <small>Formatos aceitos: PNG, JPG, JPEG</small>
+                  <small>Tamanho recomendado: 256×256px</small>
+                </div>
+              </div>
+
+              <div class="logo-actions">
+                <button class="btn-primary" id="btnChooseLogo">📁 Escolher Logo</button>
+                <button class="btn-outline-danger" id="btnRemoveLogo">Remover Logo</button>
+              </div>
+              <input type="file" id="logoFileInput" accept=".png,.jpg,.jpeg" style="display:none" />
+
+              <label class="modal-label" style="margin-top:24px;">Nome da Empresa</label>
+              <input class="modal-input" id="companyNameInput" type="text" style="max-width:480px;" />
+              <button class="btn-success" id="btnSaveCompanyName" style="display:block; margin-top:12px;">Salvar Nome</button>
+              <p class="modal-error" id="companyError"></p>
+            </div>
+          </div>
         </div>
 
         <!-- ── FOLDER VIEW ── -->
@@ -440,6 +600,8 @@
 
       </div><!-- /.content -->
     </main>
+
+    </div><!-- /.shell-body -->
 
   </div><!-- /#appShell -->
 
@@ -592,6 +754,84 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn cancel" id="planCloseBtn">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: usuário (criar/editar) -->
+  <div class="modal-overlay" id="userModalOverlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="userModalTitle">Novo Usuário</span>
+        <button class="modal-close" id="userModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label">Nome</label>
+        <input class="modal-input" id="userNameInput" type="text" placeholder="Nome completo" />
+        <label class="modal-label">E-mail</label>
+        <input class="modal-input" id="userEmailInput" type="email" placeholder="email@empresa.com" />
+        <div id="userPasswordGroup">
+          <label class="modal-label">Senha</label>
+          <input class="modal-input" id="userPasswordInput" type="password" placeholder="••••••••" />
+          <label class="modal-label">Confirmar senha</label>
+          <input class="modal-input" id="userPassword2Input" type="password" placeholder="••••••••" />
+        </div>
+        <label class="modal-label">Grupo</label>
+        <select class="modal-input" id="userGroupSelect"></select>
+        <button class="btn-secondary" id="btnChangeUserPw" style="display:none; margin-top:14px;">🔑 Alterar Senha</button>
+        <p class="modal-error" id="userModalError"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="userModalCancel">Cancelar</button>
+        <button class="modal-btn confirm" id="userModalSave">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: alterar senha de outro usuário -->
+  <div class="modal-overlay" id="userPwModalOverlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">Alterar Senha</span>
+        <button class="modal-close" id="userPwModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label">Nova senha</label>
+        <input class="modal-input" id="userPwNew1" type="password" placeholder="••••••••" />
+        <label class="modal-label">Confirmar nova senha</label>
+        <input class="modal-input" id="userPwNew2" type="password" placeholder="••••••••" />
+        <p class="modal-error" id="userPwModalError"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="userPwModalCancel">Cancelar</button>
+        <button class="modal-btn confirm" id="userPwModalSave">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: grupo (criar/editar) -->
+  <div class="modal-overlay" id="groupModalOverlay" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="groupModalTitle">Novo Grupo</span>
+        <button class="modal-close" id="groupModalClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label">Nome do grupo</label>
+        <input class="modal-input" id="groupNameInput" type="text" placeholder="Ex: Administradores" />
+        <label class="modal-label" style="margin-top:14px;">Permissões</label>
+        <div class="group-perms">
+          <label class="group-perm-opt"><input type="checkbox" id="permCanView" /> Visualizar arquivos e pastas</label>
+          <label class="group-perm-opt"><input type="checkbox" id="permCanCreate" /> Criar pastas e arquivos</label>
+          <label class="group-perm-opt"><input type="checkbox" id="permCanEdit" /> Editar arquivos</label>
+          <label class="group-perm-opt"><input type="checkbox" id="permCanDelete" /> Excluir arquivos e pastas</label>
+          <label class="group-perm-opt"><input type="checkbox" id="permIsAdmin" /> Administrador do sistema</label>
+        </div>
+        <p class="modal-error" id="groupModalError"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="groupModalCancel">Cancelar</button>
+        <button class="modal-btn confirm" id="groupModalSave">Salvar</button>
       </div>
     </div>
   </div>

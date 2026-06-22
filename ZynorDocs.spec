@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['C:\\Projetos\\centraldocs\\app.py'],
+    ['C:\\Projetos\\centraldocs\\app_new.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Projetos\\centraldocs\\icon.ico', '.')],
+    datas=[('C:\\Projetos\\centraldocs\\icon.ico', '.'), ('C:\\Projetos\\centraldocs\\ui', 'ui')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

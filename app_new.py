@@ -219,6 +219,113 @@ def _cache_load(key: str, default):
     except Exception:
         return default
 
+# ── Sincronização automática de pasta local ───────────────────────────────────
+_SYNC_THREAD = {"thread": None, "stop": False}
+
+def _sync_watch_file_path() -> str:
+    path = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
+    os.makedirs(path, exist_ok=True)
+    return os.path.join(path, ".sync_watch.json")
+
+def _load_sync_config() -> dict:
+    """Formato: {"watches": [{id, label, local_folder, remote_path, remote_name, enabled, processed}, ...]}."""
+    default = {"watches": []}
+    try:
+        with open(_sync_watch_file_path(), "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception:
+        return default
+    if "watches" in raw:
+        default["watches"] = raw["watches"]
+    elif raw.get("local_folder"):
+        # migração do formato antigo (uma única pasta monitorada)
+        default["watches"] = [{
+            "id": "migrated", "label": raw.get("remote_name") or "Sincronização",
+            "local_folder": raw.get("local_folder", ""), "remote_path": raw.get("remote_path", ""),
+            "remote_name": raw.get("remote_name", ""), "enabled": raw.get("enabled", False),
+            "processed": raw.get("processed", {}),
+        }]
+    return default
+
+def _save_sync_config(cfg: dict):
+    try:
+        with open(_sync_watch_file_path(), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception as e:
+        print(f"[Sync] erro ao salvar config: {e}")
+
+def _sync_upload_local_file(local_src: str, filename: str, parent_path: str) -> bool:
+    """Sobe um arquivo já existente em disco para dentro do Zynor (mesma lógica do upload_file)."""
+    try:
+        existing = (sb.table("files").select("id")
+                      .eq("tenant_id", TENANT_ID).eq("parent_path", parent_path).eq("name", filename)
+                      .execute()).data
+        if existing:
+            import time as _time
+            base, ext = os.path.splitext(filename)
+            filename = f"{base}_{int(_time.time())}{ext}"
+        storage_path = _make_storage_path(parent_path, filename)
+        size = os.path.getsize(local_src)
+        _storage_upload(storage_path, local_src)
+        sb.table("files").insert({
+            "tenant_id": TENANT_ID, "name": filename,
+            "storage_path": storage_path, "parent_path": parent_path,
+            "size": size,
+        }).execute()
+        _audit("sincronizou automaticamente", "arquivo", filename)
+        return True
+    except Exception as e:
+        print(f"[Sync] erro ao subir {filename}: {e}")
+        return False
+
+def _sync_watch_loop():
+    import time as _time
+    while not _SYNC_THREAD["stop"]:
+        cfg = _load_sync_config()
+        if not OFFLINE["value"]:
+            for watch in cfg.get("watches", []):
+                if not watch.get("enabled") or not watch.get("local_folder"):
+                    continue
+                folder = watch["local_folder"]
+                processed = watch.get("processed", {})
+                try:
+                    if os.path.isdir(folder):
+                        for fname in os.listdir(folder):
+                            fpath = os.path.join(folder, fname)
+                            if not os.path.isfile(fpath):
+                                continue
+                            try:
+                                mtime = os.path.getmtime(fpath)
+                                size  = os.path.getsize(fpath)
+                            except OSError:
+                                continue
+                            sig = f"{mtime}:{size}"
+                            if processed.get(fname) == sig:
+                                continue
+                            # garante que o arquivo já parou de ser escrito antes de subir
+                            _time.sleep(2)
+                            try:
+                                if os.path.getmtime(fpath) != mtime or os.path.getsize(fpath) != size:
+                                    continue  # ainda sendo gravado, tenta no próximo ciclo
+                            except OSError:
+                                continue
+                            if _sync_upload_local_file(fpath, fname, watch["remote_path"]):
+                                processed[fname] = sig
+                                watch["processed"] = processed
+                                _save_sync_config(cfg)
+                except Exception as e:
+                    print(f"[Sync] erro no watcher ({watch.get('label')}): {e}")
+        _time.sleep(5)
+
+def _start_sync_watcher():
+    if _SYNC_THREAD["thread"] and _SYNC_THREAD["thread"].is_alive():
+        return
+    import threading
+    _SYNC_THREAD["stop"] = False
+    t = threading.Thread(target=_sync_watch_loop, daemon=True)
+    _SYNC_THREAD["thread"] = t
+    t.start()
+
 _OFFLINE_WRITE_ERROR = "Sem conexão com a internet. Esta ação requer rede e será liberada quando você reconectar."
 
 def _require_online() -> dict | None:
@@ -334,6 +441,8 @@ class Api:
                 pass
             OFFLINE["value"] = False
             _audit("login")
+            if any(w.get("enabled") for w in _load_sync_config().get("watches", [])):
+                _start_sync_watcher()
             return {"ok": True, "must_change_password": user.get("must_change_password", False)}
         except Exception as e:
             # falha de rede: tenta login offline com o último cache válido deste usuário
@@ -356,6 +465,8 @@ class Api:
                 OFFLINE["value"] = False
             except Exception:
                 OFFLINE["value"] = True
+        if any(w.get("enabled") for w in _load_sync_config().get("watches", [])):
+            _start_sync_watcher()
         return {"tenant_id": TENANT_ID, "user": CURRENT_USER}
 
     def is_offline(self) -> bool:
@@ -429,11 +540,22 @@ class Api:
         return _cached_query(f"tenant_info_{TENANT_ID}", _fetch, {})
 
     # ── Pastas ────────────────────────────────────────────────────────────────
-    def _get_trashed_paths(self) -> set:
-        """Retorna conjunto de storage_paths que estão na lixeira."""
+    def _get_trashed_ids(self) -> set:
+        """Retorna conjunto de ids (pastas/arquivos) que estão na lixeira.
+        Por id, não por storage_path: storage_path é gerado por nome+pasta-pai
+        (`_make_storage_path`), então um item novo/renomeado pode colidir com o
+        path de um item antigo ainda na lixeira (não restaurado/esvaziado) e
+        seria escondido por engano se o filtro fosse por string."""
         try:
             items = self.get_trash()
-            return {i["storage_path"] for i in items if "storage_path" in i}
+            ids = set()
+            for i in items:
+                if i.get("id"):
+                    ids.add(i["id"])
+                for c in i.get("children", []):
+                    if c.get("id"):
+                        ids.add(c["id"])
+            return ids
         except Exception:
             return set()
 
@@ -446,8 +568,8 @@ class Api:
                      .eq("parent_path", "")
                      .order("name")
                      .execute())
-            trashed = self._get_trashed_paths()
-            return [f for f in (res.data or []) if f["storage_path"] not in trashed]
+            trashed = self._get_trashed_ids()
+            return [f for f in (res.data or []) if f["id"] not in trashed]
         return _cached_query(f"root_folders_{TENANT_ID}", _fetch, [])
 
     def get_subfolders(self, parent_path: str) -> list:
@@ -465,21 +587,28 @@ class Api:
     def get_children(self, storage_path: str) -> list:
         if not TENANT_ID: return []
         def _fetch():
-            trashed = self._get_trashed_paths()
+            trashed = self._get_trashed_ids()
             folders = (sb.table("folders")
-                         .select("id, name, storage_path, parent_path")
+                         .select("id, name, storage_path, parent_path, created_at")
                          .eq("tenant_id", TENANT_ID)
                          .eq("parent_path", storage_path)
-                         .order("name")
+                         .order("created_at", desc=True)
                          .execute()).data or []
             files = (sb.table("files")
                        .select("id, name, storage_path, size, created_at, locked_by, locked_name")
                        .eq("tenant_id", TENANT_ID)
                        .eq("parent_path", storage_path)
-                       .order("name")
+                       .order("created_at", desc=True)
                        .execute()).data or []
 
-            result = [{"type": "folder", **f} for f in folders if f["storage_path"] not in trashed]
+            result = [{
+                "type":         "folder",
+                "id":           f["id"],
+                "name":         f["name"],
+                "storage_path": f["storage_path"],
+                "parent_path":  f["parent_path"],
+                "updated_at":   f.get("created_at") or "",
+            } for f in folders if f["id"] not in trashed]
             result += [{
                 "type":         "file",
                 "id":           f["id"],
@@ -489,7 +618,7 @@ class Api:
                 "updated_at":   f.get("created_at") or "",
                 "locked_by":    f.get("locked_by"),
                 "locked_name":  f.get("locked_name"),
-            } for f in files if f["storage_path"] not in trashed]
+            } for f in files if f["id"] not in trashed]
             return result
         return _cached_query(f"children_{TENANT_ID}_{storage_path}", _fetch, [])
 
@@ -513,12 +642,15 @@ class Api:
     def get_folder_stats(self, storage_path: str) -> dict:
         if not TENANT_ID: return {}
         try:
+            trashed = self._get_trashed_ids()
             files   = (sb.table("files").select("id, storage_path, size, created_at")
                          .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
                          .execute()).data or []
             folders = (sb.table("folders").select("id")
                          .eq("tenant_id", TENANT_ID).eq("parent_path", storage_path)
                          .execute()).data or []
+            files   = [f for f in files   if f["id"] not in trashed]
+            folders = [f for f in folders if f["id"] not in trashed]
             total = sum(self._real_size(f["id"], f["storage_path"], f.get("size")) for f in files)
             last_change = None
             if files:
@@ -539,12 +671,13 @@ class Api:
         """Resumo global do tenant: total de arquivos, pastas, tamanho e última alteração."""
         if not TENANT_ID: return {}
         try:
-            trashed = self._get_trashed_paths()
+            trashed = self._get_trashed_ids()
             files   = (sb.table("files").select("id, storage_path, size, created_at")
                          .eq("tenant_id", TENANT_ID).execute()).data or []
             folders = (sb.table("folders").select("id")
                          .eq("tenant_id", TENANT_ID).execute()).data or []
-            files   = [f for f in files   if f["storage_path"] not in trashed]
+            files   = [f for f in files   if f["id"] not in trashed]
+            folders = [f for f in folders if f["id"] not in trashed]
             total   = sum(f.get("size") or 0 for f in files)
             last_change = None
             if files:
@@ -582,12 +715,18 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    def rename_folder(self, folder_id: str, new_name: str) -> dict:
+    def rename_folder(self, folder_id: str, new_name: str, storage_path: str = "") -> dict:
         if (err := _require_online()): return err
         try:
             perms = self.get_permissions()
             if not perms.get("can_edit") and not perms.get("is_admin"):
                 return {"ok": False, "error": "Sem permissão para renomear."}
+            if not folder_id and storage_path:
+                id_res = (sb.table("folders").select("id").eq("tenant_id", TENANT_ID)
+                            .eq("storage_path", storage_path).execute())
+                if not id_res.data:
+                    return {"ok": False, "error": "Pasta não encontrada."}
+                folder_id = id_res.data[0]["id"]
             res = (sb.table("folders").select("storage_path, parent_path, name")
                      .eq("id", folder_id).execute())
             if not res.data:
@@ -796,6 +935,12 @@ class Api:
                 return {"ok": False, "error": "Sem permissão para excluir."}
 
             if item_type == "folder":
+                if not item_id:
+                    id_res = (sb.table("folders").select("id").eq("tenant_id", TENANT_ID)
+                                .eq("storage_path", storage_path).execute())
+                    if not id_res.data:
+                        return {"ok": False, "error": "Pasta não encontrada."}
+                    item_id = id_res.data[0]["id"]
                 fn_res = sb.table("folders").select("name").eq("id", item_id).execute()
                 folder_name = fn_res.data[0]["name"] if fn_res.data else storage_path
                 # Coleta todos os filhos para registrar na lixeira junto com a pasta raiz
@@ -814,6 +959,74 @@ class Api:
                 fname = res.data[0]["name"] if res.data else storage_path
                 self._add_to_trash({"type": "file", "id": item_id, "storage_path": storage_path, "name": fname})
                 _audit("excluiu", "arquivo", fname)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def move_item(self, item_type: str, item_id: str, storage_path: str, dest_parent_path: str) -> dict:
+        """Move um arquivo ou pasta (com todo o conteúdo) para outro diretório do Zynor."""
+        if (err := _require_online()): return err
+        try:
+            perms = self.get_permissions()
+            if not perms.get("can_edit") and not perms.get("is_admin"):
+                return {"ok": False, "error": "Sem permissão para mover."}
+
+            if item_type == "folder":
+                if not item_id:
+                    id_res = (sb.table("folders").select("id").eq("tenant_id", TENANT_ID)
+                                .eq("storage_path", storage_path).execute())
+                    if not id_res.data:
+                        return {"ok": False, "error": "Pasta não encontrada."}
+                    item_id = id_res.data[0]["id"]
+                res = (sb.table("folders").select("storage_path, parent_path, name")
+                         .eq("id", item_id).execute())
+                if not res.data:
+                    return {"ok": False, "error": "Pasta não encontrada."}
+                old = res.data[0]
+                if dest_parent_path == old["parent_path"]:
+                    return {"ok": False, "error": f'"{old["name"]}" já está nessa pasta.'}
+                old_prefix = old["storage_path"].rstrip("/") + "/"
+                if dest_parent_path == old["storage_path"] or dest_parent_path.startswith(old_prefix):
+                    return {"ok": False, "error": "Não é possível mover uma pasta para dentro dela mesma."}
+                dup = (sb.table("folders").select("id").eq("tenant_id", TENANT_ID)
+                         .eq("parent_path", dest_parent_path).eq("name", old["name"]).execute()).data
+                if dup:
+                    return {"ok": False, "error": f'Já existe uma pasta chamada "{old["name"]}" no destino.'}
+
+                new_storage = _make_storage_path(dest_parent_path, old["name"], is_folder=True)
+                new_prefix  = new_storage.rstrip("/") + "/"
+                child_folders = (sb.table("folders").select("id, storage_path, parent_path")
+                                   .eq("tenant_id", TENANT_ID).execute()).data or []
+                child_files   = (sb.table("files").select("id, storage_path, parent_path")
+                                   .eq("tenant_id", TENANT_ID).execute()).data or []
+                for cf in child_folders:
+                    if cf["storage_path"].startswith(old_prefix):
+                        new_sp = new_prefix + cf["storage_path"][len(old_prefix):]
+                        new_pp = new_prefix + cf["parent_path"][len(old_prefix):] if cf["parent_path"].startswith(old_prefix) else new_storage
+                        sb.table("folders").update({"storage_path": new_sp, "parent_path": new_pp}).eq("id", cf["id"]).execute()
+                for cf in child_files:
+                    if cf["storage_path"].startswith(old_prefix):
+                        new_sp = new_prefix + cf["storage_path"][len(old_prefix):]
+                        new_pp = new_prefix + cf["parent_path"][len(old_prefix):] if cf["parent_path"].startswith(old_prefix) else new_storage
+                        _storage_move(cf["storage_path"], new_sp)
+                        sb.table("files").update({"storage_path": new_sp, "parent_path": new_pp}).eq("id", cf["id"]).execute()
+                sb.table("folders").update({"storage_path": new_storage, "parent_path": dest_parent_path}).eq("id", item_id).execute()
+                _audit("moveu", "pasta", old["name"])
+            else:
+                res = sb.table("files").select("storage_path, parent_path, name").eq("id", item_id).execute()
+                if not res.data:
+                    return {"ok": False, "error": "Arquivo não encontrado."}
+                old = res.data[0]
+                if dest_parent_path == old["parent_path"]:
+                    return {"ok": False, "error": f'"{old["name"]}" já está nessa pasta.'}
+                dup = (sb.table("files").select("id").eq("tenant_id", TENANT_ID)
+                         .eq("parent_path", dest_parent_path).eq("name", old["name"]).execute()).data
+                if dup:
+                    return {"ok": False, "error": f'Já existe um arquivo chamado "{old["name"]}" no destino.'}
+                new_storage = _make_storage_path(dest_parent_path, old["name"])
+                _storage_move(old["storage_path"], new_storage)
+                sb.table("files").update({"storage_path": new_storage, "parent_path": dest_parent_path}).eq("id", item_id).execute()
+                _audit("moveu", "arquivo", old["name"])
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -1053,6 +1266,63 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ── Sincronização automática de pasta ────────────────────────────────────
+    def get_sync_watches(self) -> list:
+        cfg = _load_sync_config()
+        return [{
+            "id":           w.get("id"),
+            "label":        w.get("label", ""),
+            "enabled":      w.get("enabled", False),
+            "local_folder": w.get("local_folder", ""),
+            "remote_path":  w.get("remote_path", ""),
+            "remote_name":  w.get("remote_name", ""),
+        } for w in cfg.get("watches", [])]
+
+    def set_sync_watches(self, watches: list) -> dict:
+        """Recebe a lista completa de pastas monitoradas (vinda da tela) e substitui a config local."""
+        perms = self.get_permissions()
+        if not perms.get("is_admin"):
+            return {"ok": False, "error": "Apenas administradores podem alterar a sincronização automática."}
+        for w in watches:
+            if w.get("enabled") and not os.path.isdir(w.get("local_folder", "")):
+                return {"ok": False, "error": f"Pasta local inválida em \"{w.get('label') or w.get('local_folder')}\"."}
+        try:
+            import uuid
+            old_cfg = _load_sync_config()
+            old_processed = {w.get("id"): w.get("processed", {}) for w in old_cfg.get("watches", [])}
+            new_watches = []
+            for w in watches:
+                wid = w.get("id") or str(uuid.uuid4())
+                new_watches.append({
+                    "id":           wid,
+                    "label":        w.get("label", ""),
+                    "enabled":      bool(w.get("enabled")),
+                    "local_folder": w.get("local_folder", ""),
+                    "remote_path":  w.get("remote_path", ""),
+                    "remote_name":  w.get("remote_name", ""),
+                    "processed":    old_processed.get(wid, {}),
+                })
+            _save_sync_config({"watches": new_watches})
+            if any(w["enabled"] for w in new_watches):
+                _start_sync_watcher()
+            _audit("alterou", "configuração", "sincronização automática")
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def select_local_folder(self) -> dict:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(title="Escolha a pasta a ser monitorada")
+            root.destroy()
+            return {"ok": True, "folder": folder} if folder else {"ok": False}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def upload_tenant_logo(self, filename: str, b64_data: str) -> dict:
         if (err := _require_online()): return err
         perms = self.get_permissions()
@@ -1131,6 +1401,7 @@ class Api:
                      .order("created_at", desc=True)
                      .limit(50)
                      .execute())
+            trashed = self._get_trashed_ids()
             seen = set()
             result = []
             for row in (res.data or []):
@@ -1139,6 +1410,8 @@ class Api:
                     seen.add(name)
                     f = (sb.table("files").select("id, name, storage_path, size, created_at")
                            .eq("tenant_id", TENANT_ID).eq("name", name).limit(1).execute()).data
+                    if f and f[0]["id"] in trashed:
+                        continue
                     if f:
                         result.append({
                             "type": "file",
@@ -1167,16 +1440,18 @@ class Api:
         try:
             with open(self._favorites_file(), "r", encoding="utf-8") as f:
                 paths = json.load(f)
+            trashed = self._get_trashed_ids()
             result = []
             for sp in paths:
                 row = (sb.table("folders").select("id, name, storage_path, parent_path")
                          .eq("tenant_id", TENANT_ID).eq("storage_path", sp).limit(1).execute()).data
                 if row:
-                    result.append({"type": "folder", **row[0]})
+                    if row[0]["id"] not in trashed:
+                        result.append({"type": "folder", **row[0]})
                     continue
                 row = (sb.table("files").select("id, name, storage_path, size, created_at")
                          .eq("tenant_id", TENANT_ID).eq("storage_path", sp).limit(1).execute()).data
-                if row:
+                if row and row[0]["id"] not in trashed:
                     result.append({
                         "type": "file", "id": row[0]["id"], "name": row[0]["name"],
                         "storage_path": row[0]["storage_path"],
@@ -1214,6 +1489,27 @@ class Api:
         except Exception:
             return False
 
+    # ── Preferência de ordenação da lista de arquivos ──────────────────────────
+    def _sort_pref_file(self) -> str:
+        path = os.path.join(os.path.expanduser("~"), "Zynor Docs", TENANT_ID)
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, f".sort_pref_{CURRENT_USER.get('id','')}.json")
+
+    def get_sort_pref(self) -> dict:
+        try:
+            with open(self._sort_pref_file(), "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {"field": "updated_at", "dir": "desc"}
+
+    def set_sort_pref(self, field: str, direction: str) -> dict:
+        try:
+            with open(self._sort_pref_file(), "w", encoding="utf-8") as f:
+                json.dump({"field": field, "dir": direction}, f)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ── Compartilhados ───────────────────────────────────────────────────────
     def get_shared_files(self) -> list:
         """Arquivos cujo link de compartilhamento foi gerado por qualquer usuário do tenant."""
@@ -1225,6 +1521,7 @@ class Api:
                      .order("created_at", desc=True)
                      .limit(50)
                      .execute())
+            trashed = self._get_trashed_ids()
             seen = set()
             result = []
             for row in (res.data or []):
@@ -1233,6 +1530,8 @@ class Api:
                     seen.add(name)
                     f = (sb.table("files").select("id, name, storage_path, size, created_at")
                            .eq("tenant_id", TENANT_ID).eq("name", name).limit(1).execute()).data
+                    if f and f[0]["id"] in trashed:
+                        continue
                     if f:
                         result.append({
                             "type": "file",

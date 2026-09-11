@@ -5,6 +5,10 @@ const state = {
   breadcrumb:  [],
   navStack:    [],   // [{name, storage_path}] — pilha exata de navegação, sem reconstrução de path
   expanded:    new Set(),
+  sort:        { field: "updated_at", dir: "desc" },
+  lastItems:   [],
+  selected:    new Map(),  // storage_path -> item, seleção múltipla (Ctrl/Shift+clique) na listagem
+  selectAnchor: null,      // último item clicado sem modificador, base para seleção em intervalo (Shift)
 };
 
 // ── Diálogos customizados ─────────────────────────────────────────────────────
@@ -159,11 +163,12 @@ function showHomeView() {
 }
 
 async function loadHomeDashboard() {
-  // Carrega stats, recentes e favoritos em paralelo
-  const [stats, recents, favs] = await Promise.all([
+  // Carrega stats, recentes, favoritos e arquivos soltos na raiz em paralelo
+  const [stats, recents, favs, rootChildren] = await Promise.all([
     api().get_tenant_stats().catch(() => ({})),
     api().get_recent_files().catch(() => []),
     api().get_favorites().catch(() => []),
+    api().get_children("").catch(() => []),
   ]);
 
   // ── Stats ──────────────────────────────────────────────────────────────────
@@ -197,6 +202,19 @@ async function loadHomeDashboard() {
     });
   } else {
     favSection.style.display = "none";
+  }
+
+  // ── Arquivos soltos na raiz (fora de qualquer pasta) ────────────────────────
+  // ex.: sincronização automática apontando pra "Raiz" — a navegação normal só mostra
+  // pastas na Início, então sem essa seção esses arquivos ficavam sem lugar nenhum pra
+  // aparecer (só eram alcançáveis via Recentes/Favoritos).
+  const rootFilesSection = document.getElementById("homeRootFilesSection");
+  const rootFiles = rootChildren.filter(i => i.type === "file");
+  if (rootFiles.length) {
+    rootFilesSection.style.display = "";
+    renderFlatList("homeRootFilesList", rootFiles, { emptyMsg: "", showMenu: true, onChanged: loadHomeDashboard });
+  } else {
+    rootFilesSection.style.display = "none";
   }
 }
 
@@ -303,7 +321,7 @@ function initChangePw() {
   btn.addEventListener("click", async () => {
     const p1 = document.getElementById("newPw1").value;
     const p2 = document.getElementById("newPw2").value;
-    if (!p1 || p1.length < 6) { errEl.textContent = "Mínimo 6 caracteres."; return; }
+    if (!p1 || p1.length < 3) { errEl.textContent = "Mínimo 3 caracteres."; return; }
     if (p1 !== p2) { errEl.textContent = "As senhas não coincidem."; return; }
     btn.disabled = true; btn.textContent = "Salvando..."; errEl.textContent = "";
     try {
@@ -327,6 +345,8 @@ async function loadSession() {
     const s = await api().get_session();
     if (!s.user?.name) return;
     state.user = s.user;
+    try { state.sort = await api().get_sort_pref(); } catch(e) { /* mantém default */ }
+    updateSortHeaderUI();
     const initials = s.user.name.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();
     document.querySelectorAll(".user-avatar").forEach(el => el.textContent = initials);
     document.querySelectorAll(".user-name").forEach(el => el.textContent = s.user.name);
@@ -530,12 +550,14 @@ async function selectNode(wrap, folder) {
   const existingIdx = state.navStack.findIndex(n => n.storage_path === folder.storage_path);
   if (existingIdx >= 0) {
     state.navStack = state.navStack.slice(0, existingIdx + 1);
+    if (folder.id) state.navStack[existingIdx].id = folder.id;
   } else {
-    state.navStack.push({ name: folder.name, storage_path: folder.storage_path });
+    state.navStack.push({ name: folder.name, storage_path: folder.storage_path, id: folder.id || "" });
   }
 
   state.currentPath = folder.storage_path;
   state.currentName = folder.name;
+  state.currentFolderId = state.navStack[state.navStack.length - 1].id || "";
   // breadcrumb derivado direto da pilha — sem reconstrução por split de string
   state.breadcrumb  = state.navStack.map(n => ({ name: n.name, path: n.storage_path }));
 
@@ -578,7 +600,7 @@ function updateFolderTitle(name) {
 }
 
 // ── Renomear ──────────────────────────────────────────────────────────────────
-function startRename(item) {
+function startRename(item, onDone) {
   modalMode = "rename";
   const label = item.type === "folder" ? "pasta" : "arquivo";
   document.getElementById("modalTitle").textContent   = `Renomear ${label}`;
@@ -606,12 +628,13 @@ function startRename(item) {
     confirmBtn.disabled    = true;
     confirmBtn.textContent = "Salvando...";
     try {
-      const fn  = item.type === "folder" ? "rename_folder" : "rename_file";
-      const res = await api()[fn](item.id, newName);
+      const res = item.type === "folder"
+        ? await api().rename_folder(item.id, newName, item.storage_path)
+        : await api().rename_file(item.id, newName);
       if (!res.ok) { errEl.textContent = res.error || "Erro ao renomear."; return; }
       closeModal();
       showToast(`Renomeado para "${newName}".`, "ok");
-      await loadGrid(state.currentPath);
+      if (onDone) { await onDone(); } else { await loadGrid(state.currentPath); }
       await loadSidebar();
     } finally {
       confirmBtn.disabled    = false;
@@ -629,7 +652,7 @@ function closeRowDropdown() {
   document.querySelector(".row-dropdown")?.remove();
 }
 
-function openRowDropdown(e, item) {
+function openRowDropdown(e, item, onDone) {
   closeRowDropdown();
   const isFile   = item.type === "file";
   const isFolder = item.type === "folder";
@@ -653,7 +676,7 @@ function openRowDropdown(e, item) {
 
   actions.push({
     icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
-    label: "Renomear", action: () => startRename(item),
+    label: "Renomear", action: () => startRename(item, onDone),
   });
 
   if (isFile) actions.push({
@@ -672,6 +695,11 @@ function openRowDropdown(e, item) {
     },
   });
 
+  actions.push({
+    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-8l-2-2z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>`,
+    label: "Mover para pasta...", action: () => openMoveModal([item], onDone),
+  });
+
   actions.push({ sep: true });
 
   actions.push({
@@ -684,8 +712,22 @@ function openRowDropdown(e, item) {
       if (res.ok) {
         showToast(`"${item.name}" movido para a lixeira.`, "ok");
         closeDetail();
-        await loadGrid(state.currentPath);
-        await loadStats(state.currentPath);
+        if (item.type === "folder" && item.storage_path === state.currentPath) {
+          // a pasta aberta foi excluída — volta para o nível pai (ou home)
+          state.navStack.pop();
+          const parent = state.navStack[state.navStack.length - 1];
+          if (parent) {
+            const node = document.querySelector(`.tree-node[data-path="${parent.storage_path}"]`) || makeVirtualNode(parent.storage_path);
+            await selectNode(node, parent);
+          } else {
+            showHomeView();
+          }
+        } else if (onDone) {
+          await onDone();
+        } else {
+          await loadGrid(state.currentPath);
+          await loadStats(state.currentPath);
+        }
         await loadSidebar();
       } else {
         showToast(res.error || "Erro ao excluir.", "error");
@@ -725,19 +767,415 @@ function openRowDropdown(e, item) {
 }
 
 // ── Grid ─────────────────────────────────────────────────────────────────────
+// ── Ordenação da listagem ────────────────────────────────────────────────────
+function sortItems(items) {
+  const { field, dir } = state.sort;
+  const mul = dir === "asc" ? 1 : -1;
+  return [...items].sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    if (field === "name") {
+      return mul * a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
+    }
+    const va = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const vb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    return mul * (va - vb);
+  });
+}
+
+function updateSortHeaderUI() {
+  document.querySelectorAll(".file-table thead th.sortable-th").forEach(th => {
+    th.classList.remove("sort-asc", "sort-desc");
+    if (th.dataset.sort === state.sort.field) {
+      th.classList.add(state.sort.dir === "asc" ? "sort-asc" : "sort-desc");
+    }
+  });
+}
+
+function initFileListSort() {
+  document.querySelectorAll(".file-table thead th.sortable-th").forEach(th => {
+    th.addEventListener("click", async () => {
+      const field = th.dataset.sort;
+      if (state.sort.field === field) {
+        state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+      } else {
+        state.sort = { field, dir: field === "name" ? "asc" : "desc" };
+      }
+      updateSortHeaderUI();
+      renderFileList();
+      try { await api().set_sort_pref(state.sort.field, state.sort.dir); } catch(e) { /* preferência não é crítica */ }
+    });
+  });
+  updateSortHeaderUI();
+}
+
+// ── Seleção múltipla (Ctrl/Shift+clique) e ações em massa ───────────────────
+function clearMultiSelection() {
+  if (!state.selected.size) return;
+  state.selected.clear();
+  state.selectAnchor = null;
+  document.querySelectorAll(".item-row.multi-selected").forEach(r => r.classList.remove("multi-selected"));
+  updateBulkBar();
+}
+
+function toggleMultiSelect(item, row) {
+  closeDetail();
+  document.querySelectorAll(".item-row.selected").forEach(r => r.classList.remove("selected"));
+  if (state.selected.has(item.storage_path)) {
+    state.selected.delete(item.storage_path);
+    row.classList.remove("multi-selected");
+  } else {
+    state.selected.set(item.storage_path, item);
+    row.classList.add("multi-selected");
+  }
+  state.selectAnchor = item;
+  updateBulkBar();
+}
+
+function selectRangeTo(item, row, items) {
+  closeDetail();
+  document.querySelectorAll(".item-row.selected").forEach(r => r.classList.remove("selected"));
+  const rows = Array.from(document.querySelectorAll("#fileList .item-row"));
+  const anchorIdx = rows.findIndex(r => r.dataset.path === state.selectAnchor?.storage_path);
+  const targetIdx = rows.indexOf(row);
+  if (anchorIdx === -1 || targetIdx === -1) { toggleMultiSelect(item, row); return; }
+  const [start, end] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx];
+  for (let i = start; i <= end; i++) {
+    const r = rows[i];
+    const it = items.find(x => x.storage_path === r.dataset.path);
+    if (it) {
+      state.selected.set(it.storage_path, it);
+      r.classList.add("multi-selected");
+    }
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const footer = document.querySelector(".file-list-footer");
+  if (!footer) return;
+  const n = state.selected.size;
+  if (!n) {
+    footer.classList.remove("bulk-mode");
+    const total = state.lastItems.length;
+    footer.textContent = `${total} ${total === 1 ? "item" : "itens"}`;
+    return;
+  }
+  footer.classList.add("bulk-mode");
+  footer.innerHTML = `
+    <span>${n} ${n === 1 ? "item selecionado" : "itens selecionados"}</span>
+    <div class="bulk-actions">
+      <button class="btn-secondary" id="bulkMoveBtn">Mover para pasta...</button>
+      <button class="btn-danger" id="bulkTrashBtn">Mover para lixeira</button>
+      <button class="btn-secondary" id="bulkCancelBtn">Cancelar</button>
+    </div>`;
+  footer.querySelector("#bulkMoveBtn").addEventListener("click", () => openMoveModal([...state.selected.values()]));
+  footer.querySelector("#bulkTrashBtn").addEventListener("click", bulkTrashSelection);
+  footer.querySelector("#bulkCancelBtn").addEventListener("click", clearMultiSelection);
+}
+
+// ── Overlay de progresso (reaproveita o de upload) para operações em lote ────
+async function runBulkProgress(title, items, taskFn) {
+  const overlay = document.getElementById("uploadOverlay");
+  const titleEl = document.getElementById("uploadOverlayTitle");
+  const nameEl  = document.getElementById("uploadFilename");
+  const barEl   = document.getElementById("uploadBarFill");
+  const countEl = document.getElementById("uploadCounter");
+
+  titleEl.textContent = title;
+  overlay.classList.add("open");
+  let done = 0, failed = 0, lastError = "";
+
+  for (const item of items) {
+    nameEl.textContent  = item.name;
+    countEl.textContent = `${done} / ${items.length}`;
+    try {
+      const res = await taskFn(item);
+      if (!res.ok) { failed++; lastError = res.error || ""; }
+    } catch(e) {
+      failed++;
+      console.warn("bulk op error:", item.name, e);
+    }
+    done++;
+    barEl.style.width = `${(done / items.length) * 100}%`;
+    countEl.textContent = `${done} / ${items.length}`;
+  }
+
+  nameEl.textContent = "Concluído!";
+  await new Promise(r => setTimeout(r, 600));
+  overlay.classList.remove("open");
+  barEl.style.width = "0%";
+  titleEl.textContent = "Enviando arquivos";
+  return { done, failed, lastError };
+}
+
+async function bulkTrashSelection() {
+  const targets = [...state.selected.values()];
+  if (!targets.length) return;
+  const ok = await showConfirm(
+    `Mover ${targets.length} ${targets.length === 1 ? "item" : "itens"} para a lixeira?`,
+    { title: "Excluir itens", okLabel: "Excluir" }
+  );
+  if (!ok) return;
+  const { done, failed, lastError } = await runBulkProgress(
+    "Movendo para a lixeira...",
+    targets,
+    item => api().delete_item(item.type, item.id, item.storage_path)
+  );
+  clearMultiSelection();
+  closeDetail();
+  await loadGrid(state.currentPath);
+  await loadStats(state.currentPath);
+  await loadSidebar();
+  if (failed) {
+    showToast(lastError || `${failed} item(ns) não puderam ser excluídos.`, "warn");
+  } else {
+    showToast(`${done} item(ns) movido(s) para a lixeira.`, "ok");
+  }
+}
+
+// ── Seletor de pasta em árvore (modal reutilizável: mover itens, escolher     ──
+// ── destino de sincronização, etc.) ──────────────────────────────────────────
+let _moveTargets = [];
+let _moveDest = null;
+let _folderPickerCurrentPath = null; // path a marcar como "(pasta atual)" e desabilitar; null = sem restrição
+let _folderPickerOnConfirm = null;   // callback(destPath) chamado ao confirmar
+let _folderPickerOnClose = null;     // callback() chamado sempre que o modal fecha (confirmado ou cancelado) —
+                                      // usado por quem abre esse modal de dentro de outro modal (ex.: sincronização)
+
+function _moveNodeExcluded(path, excludePaths, excludePrefixes) {
+  return excludePaths.has(path) || excludePrefixes.some(p => path.startsWith(p));
+}
+
+function _selectMoveDest(row, path) {
+  document.querySelectorAll("#moveTreeRootRow.active, #moveTree .move-tree-row.active")
+    .forEach(r => r.classList.remove("active"));
+  row.classList.add("active");
+  _moveDest = path;
+}
+
+function buildMoveTreeNode(folder, depth, excludePaths, excludePrefixes) {
+  const wrap = document.createElement("div");
+  wrap.className = "move-tree-node";
+
+  const row = document.createElement("div");
+  row.className = "move-tree-row";
+  row.style.paddingLeft = `${10 + depth * 16}px`;
+
+  const chevron = document.createElement("span");
+  chevron.className = "move-tree-chevron";
+  chevron.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+  const icon = document.createElement("span");
+  icon.className = "move-tree-folder-icon";
+  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1.2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+
+  const label = document.createElement("span");
+  label.className = "move-tree-label";
+  label.textContent = folder.name;
+  row.append(chevron, icon, label);
+
+  // se for a pasta de referência do fluxo atual (ex.: pasta onde os itens já estão, ao mover):
+  // continua visível/expansível (pra alcançar as subpastas dela), só não pode ser escolhida
+  // como destino (seria um no-op)
+  const isCurrent = _folderPickerCurrentPath !== null && folder.storage_path === _folderPickerCurrentPath;
+  if (isCurrent) {
+    row.classList.add("disabled");
+    const tag = document.createElement("span");
+    tag.className = "move-tree-current-tag";
+    tag.textContent = "(pasta atual)";
+    row.appendChild(tag);
+  }
+
+  wrap.appendChild(row);
+
+  const children = document.createElement("div");
+  children.className = "move-tree-children";
+  wrap.appendChild(children);
+
+  chevron.addEventListener("click", async e => {
+    e.stopPropagation();
+    await toggleMoveTreeNode(wrap, folder, depth, excludePaths, excludePrefixes);
+  });
+
+  row.addEventListener("click", () => {
+    if (isCurrent) return;
+    _selectMoveDest(row, folder.storage_path);
+  });
+
+  return wrap;
+}
+
+async function toggleMoveTreeNode(wrap, folder, depth, excludePaths, excludePrefixes) {
+  const children = wrap.querySelector(".move-tree-children");
+  const chevron  = wrap.querySelector(".move-tree-chevron");
+
+  if (chevron.classList.contains("open")) {
+    chevron.classList.remove("open");
+    children.innerHTML = "";
+    return;
+  }
+  chevron.classList.add("open");
+  children.innerHTML = '<div class="move-tree-loading">Carregando...</div>';
+  try {
+    const subs = (await api().get_subfolders(folder.storage_path))
+      .filter(f => !_moveNodeExcluded(f.storage_path, excludePaths, excludePrefixes));
+    children.innerHTML = "";
+    if (subs.length) {
+      subs.forEach(sub => children.appendChild(buildMoveTreeNode(sub, depth + 1, excludePaths, excludePrefixes)));
+    } else {
+      chevron.classList.add("leaf");
+    }
+  } catch(e) {
+    children.innerHTML = '<div class="move-tree-empty">Erro ao carregar</div>';
+  }
+}
+
+// opts: { title, confirmLabel, currentPath, excludePaths, excludePrefixes, onConfirm(destPath) }
+function openFolderTreeModal(opts) {
+  const overlay    = document.getElementById("moveOverlay");
+  const title      = document.getElementById("moveModalTitle");
+  const errorEl    = document.getElementById("moveError");
+  const tree       = document.getElementById("moveTree");
+  const rootRow    = document.getElementById("moveTreeRootRow");
+  const confirmBtn = document.getElementById("moveConfirmBtn");
+
+  _moveDest = null;
+  _folderPickerCurrentPath = opts.currentPath ?? null;
+  _folderPickerOnConfirm   = opts.onConfirm;
+  _folderPickerOnClose     = opts.onClose || null;
+
+  errorEl.textContent = "";
+  title.textContent = opts.title;
+  confirmBtn.textContent = opts.confirmLabel || "Mover";
+  rootRow.classList.remove("active");
+  rootRow.classList.toggle("disabled", _folderPickerCurrentPath === "");
+
+  const excludePaths    = opts.excludePaths || new Set();
+  const excludePrefixes = opts.excludePrefixes || [];
+
+  tree.innerHTML = '<div class="move-tree-loading">Carregando...</div>';
+  (async () => {
+    try {
+      const folders = (await api().get_root_folders())
+        .filter(f => !_moveNodeExcluded(f.storage_path, excludePaths, excludePrefixes));
+      tree.innerHTML = "";
+      if (folders.length) {
+        folders.forEach(f => tree.appendChild(buildMoveTreeNode(f, 0, excludePaths, excludePrefixes)));
+      } else {
+        tree.innerHTML = '<div class="move-tree-empty">Nenhuma outra pasta disponível</div>';
+      }
+    } catch(e) {
+      tree.innerHTML = '<div class="move-tree-empty">Erro ao carregar pastas</div>';
+    }
+  })();
+
+  overlay.classList.add("open");
+}
+
+function openMoveModal(items, onDone) {
+  if (!items.length) return;
+  _moveTargets = items;
+  const excludePrefixes = items.filter(i => i.type === "folder").map(i => i.storage_path.replace(/\/$/, "") + "/");
+  const excludePaths = new Set(items.map(i => i.storage_path));
+  openFolderTreeModal({
+    title: items.length === 1 ? `Mover "${items[0].name}"` : `Mover ${items.length} itens`,
+    confirmLabel: "Mover",
+    currentPath: state.currentPath ?? "",
+    excludePaths, excludePrefixes,
+    onConfirm: dest => _confirmMoveTargets(items, dest, onDone),
+  });
+}
+
+async function _confirmMoveTargets(targets, dest, onDone) {
+  const { done, failed, lastError } = await runBulkProgress(
+    targets.length === 1 ? `Movendo "${targets[0].name}"...` : "Movendo itens...",
+    targets,
+    item => api().move_item(item.type, item.id, item.storage_path, dest)
+  );
+  clearMultiSelection();
+  closeDetail();
+  // se a própria pasta aberta foi movida (menu "⋮" da pasta atual), sobe para o pai
+  const movedCurrentFolder = targets.some(t => t.type === "folder" && t.storage_path === state.currentPath);
+  if (movedCurrentFolder) {
+    state.navStack.pop();
+    const parent = state.navStack[state.navStack.length - 1];
+    if (parent) {
+      const node = document.querySelector(`.tree-node[data-path="${parent.storage_path}"]`) || makeVirtualNode(parent.storage_path);
+      await selectNode(node, parent);
+    } else {
+      showHomeView();
+    }
+  } else if (onDone) {
+    await onDone();
+  } else {
+    await loadGrid(state.currentPath);
+    await loadStats(state.currentPath);
+  }
+  await loadSidebar();
+  if (failed) {
+    showToast(lastError || `${failed} item(ns) não puderam ser movidos.`, "warn");
+  } else {
+    showToast(`${done} item(ns) movido(s) com sucesso.`, "ok");
+  }
+}
+
+function closeMoveModal() {
+  document.getElementById("moveOverlay").classList.remove("open");
+  _moveTargets = [];
+  _moveDest = null;
+  _folderPickerCurrentPath = null;
+  _folderPickerOnConfirm = null;
+  const onClose = _folderPickerOnClose;
+  _folderPickerOnClose = null;
+  onClose?.();
+}
+
+function initMove() {
+  const overlay    = document.getElementById("moveOverlay");
+  const confirmBtn = document.getElementById("moveConfirmBtn");
+  const errorEl    = document.getElementById("moveError");
+
+  document.getElementById("moveClose").addEventListener("click", closeMoveModal);
+  document.getElementById("moveCancel").addEventListener("click", closeMoveModal);
+  overlay.addEventListener("click", e => { if (e.target === overlay) closeMoveModal(); });
+
+  document.getElementById("moveTreeRootRow").addEventListener("click", function() {
+    if (this.classList.contains("disabled")) return;
+    _selectMoveDest(this, "");
+  });
+
+  confirmBtn.addEventListener("click", () => {
+    if (_moveDest === null) { errorEl.textContent = "Selecione uma pasta de destino."; return; }
+    const dest = _moveDest;
+    const onConfirm = _folderPickerOnConfirm;
+    errorEl.textContent = "";
+    closeMoveModal();
+    onConfirm?.(dest);
+  });
+}
+
 async function loadGrid(path) {
+  clearMultiSelection();
   const tbody = document.getElementById("fileList");
   tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Carregando...</td></tr>';
   try {
-    const items = await api().get_children(path);
+    state.lastItems = await api().get_children(path);
     await checkOffline();
-    const footer = document.querySelector(".file-list-footer");
-    if (!items.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Pasta vazia</td></tr>';
-      if (footer) footer.textContent = "0 itens";
-      return;
-    }
-    tbody.innerHTML = items.map(item => {
+    renderFileList();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">Erro: ${e}</td></tr>`;
+  }
+}
+
+function renderFileList() {
+  const tbody = document.getElementById("fileList");
+  const items = sortItems(state.lastItems || []);
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Pasta vazia</td></tr>';
+    updateBulkBar();
+    return;
+  }
+  tbody.innerHTML = items.map(item => {
       const icon = item.type === "folder"
         ? `<span class="grid-icon folder-ic"><svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1.2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>`
         : `<span class="grid-icon file-ic ${fileExt(item.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>`;
@@ -751,17 +1189,30 @@ async function loadGrid(path) {
           <td>${date}</td>
           <td><button class="btn-more">⋮</button></td>
         </tr>`;
-    }).join("");
+  }).join("");
 
-    tbody.querySelectorAll(".item-row").forEach(row => {
+  tbody.querySelectorAll(".item-row").forEach(row => {
       const item = items.find(i => i.storage_path === row.dataset.path);
+      if (item && state.selected.has(item.storage_path)) row.classList.add("multi-selected");
 
       // clique simples → seleciona + abre painel de detalhes
+      // Ctrl/Cmd+clique → adiciona/remove da seleção múltipla; Shift+clique → seleciona o intervalo
       row.addEventListener("click", e => {
         if (e.target.closest(".btn-more")) return;
+        if (!item) return;
+        if (e.shiftKey && state.selectAnchor) {
+          selectRangeTo(item, row, items);
+          return;
+        }
+        if (e.ctrlKey || e.metaKey) {
+          toggleMultiSelect(item, row);
+          return;
+        }
+        if (state.selected.size) clearMultiSelection();
         tbody.querySelectorAll(".item-row").forEach(r => r.classList.remove("selected"));
         row.classList.add("selected");
-        if (item) openDetail(item);
+        state.selectAnchor = item;
+        openDetail(item);
       });
 
       // duplo clique em pasta → navega; em arquivo → abre
@@ -789,10 +1240,7 @@ async function loadGrid(path) {
       });
     });
 
-    if (footer) footer.textContent = `${items.length} ${items.length === 1 ? "item" : "itens"}`;
-  } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">Erro: ${e}</td></tr>`;
-  }
+  updateBulkBar();
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -970,6 +1418,16 @@ function fmtDate(iso) {
       hour:"2-digit", minute:"2-digit"
     });
   } catch { return iso; }
+}
+
+// ── Opções da pasta atual ────────────────────────────────────────────────────
+function initFolderOptions() {
+  const btn = document.getElementById("btnFolderMore");
+  btn?.addEventListener("click", e => {
+    e.stopPropagation();
+    if (!state.currentPath) return;
+    openRowDropdown(e, { type: "folder", id: state.currentFolderId || "", storage_path: state.currentPath, name: state.currentName });
+  });
 }
 
 // ── Dropdown Novo ─────────────────────────────────────────────────────────────
@@ -1406,7 +1864,8 @@ function renderFlatList(containerId, items, opts = {}) {
       ? `<svg viewBox="0 0 24 24" fill="#fbbf24" stroke="#d97706" stroke-width="1"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`
       : `<svg viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="1.2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
     const meta = opts.metaFn ? opts.metaFn(item) : (item.updated_at ? fmtDate(item.updated_at) : "");
-    const actions = opts.actionsFn ? opts.actionsFn(item) : "";
+    const actions = opts.actionsFn ? opts.actionsFn(item)
+      : opts.showMenu ? `<button class="btn-more flat-item-menu">⋮</button>` : "";
     return `
       <div class="flat-item" data-path="${item.storage_path}" data-type="${item.type}" data-name="${item.name}">
         <div class="flat-item-icon">${icon}</div>
@@ -1420,6 +1879,8 @@ function renderFlatList(containerId, items, opts = {}) {
   }).join("");
 
   el.querySelectorAll(".flat-item").forEach(row => {
+    const item = items.find(i => i.storage_path === row.dataset.path);
+
     row.addEventListener("dblclick", async () => {
       if (row.dataset.type === "file") {
         await openFile(row.dataset.path, row.dataset.name);
@@ -1429,6 +1890,13 @@ function renderFlatList(containerId, items, opts = {}) {
         await selectNode(node, { storage_path: row.dataset.path, name: row.dataset.name });
       }
     });
+
+    if (opts.showMenu && item) {
+      row.querySelector(".flat-item-menu")?.addEventListener("click", e => {
+        e.stopPropagation();
+        openRowDropdown(e, item, opts.onChanged);
+      });
+    }
   });
 }
 
@@ -1557,10 +2025,12 @@ function switchSettingsTab(tab) {
   document.getElementById("paneUsuarios").style.display = tab === "usuarios" ? "" : "none";
   document.getElementById("paneGrupos").style.display   = tab === "grupos"   ? "" : "none";
   document.getElementById("paneEmpresa").style.display  = tab === "empresa"  ? "" : "none";
+  document.getElementById("paneSync").style.display     = tab === "sync"     ? "" : "none";
 
   if (tab === "usuarios") loadUsersTable();
   else if (tab === "grupos") loadGroupsTable();
   else if (tab === "empresa") loadEmpresaTab();
+  else if (tab === "sync") loadSyncTab();
 }
 
 function initSettingsTabs() {
@@ -1858,9 +2328,147 @@ function initEmpresaTab() {
   });
 }
 
+// ── Sincronização automática de pastas ──────────────────────────────────────
+let _syncWatches = [];     // cache local da última lista carregada, pra editar/remover sem recarregar
+let _syncEditingId = null; // id da pasta sendo editada no modal; null = nova
+let _syncModalRemotePath = "";
+
+function _displayPath(storage_path) {
+  // storage_path sempre começa com "{tenant_id}/..." — esconde esse prefixo na UI
+  const parts = storage_path.split("/");
+  return parts.length > 1 ? parts.slice(1).join("/") : storage_path;
+}
+
+async function loadSyncTab() {
+  const tbody = document.getElementById("syncTableBody");
+  tbody.innerHTML = `<tr><td colspan="5">Carregando...</td></tr>`;
+  _syncWatches = await api().get_sync_watches();
+  document.getElementById("syncError").textContent = "";
+
+  if (!_syncWatches.length) {
+    tbody.innerHTML = `<tr><td colspan="5">Nenhuma pasta monitorada ainda. Clique em "+ Adicionar pasta".</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = _syncWatches.map(w => `
+    <tr>
+      <td><strong>${w.label || "—"}</strong></td>
+      <td>${w.local_folder || "—"}</td>
+      <td>${w.remote_path ? _displayPath(w.remote_path) : "Raiz"}</td>
+      <td>${w.enabled ? `<span class="perm-yes">Ativo</span>` : `<span class="perm-no">Inativo</span>`}</td>
+      <td>
+        <div class="row-actions">
+          <button title="Editar" onclick="openSyncModal('${w.id}')">✏️</button>
+          <button title="Remover" class="danger" onclick="deleteSyncWatchRow('${w.id}')">✕</button>
+        </div>
+      </td>
+    </tr>`).join("");
+}
+
+function openSyncModal(watchId = null) {
+  _syncEditingId = watchId;
+  const editing = watchId ? _syncWatches.find(w => w.id === watchId) : null;
+
+  document.getElementById("syncModalTitle").textContent = editing ? "Editar pasta monitorada" : "Nova pasta monitorada";
+  document.getElementById("syncModalLabel").value        = editing?.label || "";
+  document.getElementById("syncModalLocalFolder").value  = editing?.local_folder || "";
+  document.getElementById("syncModalEnabled").checked    = !!editing?.enabled;
+  document.getElementById("syncModalError").textContent  = "";
+
+  _syncModalRemotePath = editing?.remote_path || "";
+  document.getElementById("syncModalRemoteDisplay").value = _syncModalRemotePath ? _displayPath(_syncModalRemotePath) : "Raiz";
+
+  document.getElementById("syncModalOverlay").style.display = "flex";
+}
+
+function closeSyncModal() {
+  document.getElementById("syncModalOverlay").style.display = "none";
+  _syncEditingId = null;
+}
+
+async function saveSyncModal() {
+  const errEl = document.getElementById("syncModalError");
+  errEl.textContent = "";
+
+  const label       = document.getElementById("syncModalLabel").value.trim();
+  const localFolder = document.getElementById("syncModalLocalFolder").value.trim();
+  const enabled     = document.getElementById("syncModalEnabled").checked;
+
+  if (enabled && !localFolder) { errEl.textContent = "Escolha a pasta local a ser monitorada."; return; }
+
+  const watch = {
+    id:           _syncEditingId,
+    label,
+    local_folder: localFolder,
+    remote_path:  _syncModalRemotePath,
+    remote_name:  _syncModalRemotePath ? _displayPath(_syncModalRemotePath) : "Raiz",
+    enabled,
+  };
+  const updated = _syncEditingId
+    ? _syncWatches.map(w => w.id === _syncEditingId ? watch : w)
+    : [..._syncWatches, watch];
+
+  const saveBtn = document.getElementById("syncModalSave");
+  saveBtn.disabled = true;
+  const res = await api().set_sync_watches(updated);
+  saveBtn.disabled = false;
+  if (!res.ok) { errEl.textContent = res.error || "Erro ao salvar."; return; }
+
+  closeSyncModal();
+  showToast("Sincronização automática atualizada.", "ok");
+  await loadSyncTab();
+}
+
+async function deleteSyncWatchRow(watchId) {
+  const watch = _syncWatches.find(w => w.id === watchId);
+  const ok = await showConfirm(
+    `Remover a pasta monitorada "${watch?.label || ""}"? Os arquivos já sincronizados não são afetados.`,
+    { title: "Remover pasta monitorada", okLabel: "Remover" }
+  );
+  if (!ok) return;
+  const updated = _syncWatches.filter(w => w.id !== watchId);
+  const res = await api().set_sync_watches(updated);
+  if (!res.ok) { showToast(res.error || "Erro ao remover.", "error"); return; }
+  showToast("Pasta removida da sincronização automática.", "ok");
+  await loadSyncTab();
+}
+
+function initSyncTab() {
+  document.getElementById("btnAddSyncWatch")?.addEventListener("click", () => openSyncModal());
+  document.getElementById("syncModalClose")?.addEventListener("click", closeSyncModal);
+  document.getElementById("syncModalCancel")?.addEventListener("click", closeSyncModal);
+  document.getElementById("syncModalSave")?.addEventListener("click", saveSyncModal);
+  document.getElementById("syncModalOverlay")?.addEventListener("click", e => {
+    if (e.target.id === "syncModalOverlay") closeSyncModal();
+  });
+
+  document.getElementById("syncModalChooseLocal")?.addEventListener("click", async () => {
+    const res = await api().select_local_folder();
+    if (res.ok && res.folder) document.getElementById("syncModalLocalFolder").value = res.folder;
+  });
+
+  document.getElementById("syncModalChooseRemote")?.addEventListener("click", () => {
+    // a árvore de pastas usa o mesmo modal do "Mover para pasta"; como já estamos dentro de
+    // outro modal (sincronização), escondemos ele enquanto a árvore está aberta e devolvemos
+    // ao fechar (onClose roda tanto ao confirmar quanto ao cancelar)
+    const syncOverlay = document.getElementById("syncModalOverlay");
+    syncOverlay.style.display = "none";
+    openFolderTreeModal({
+      title: "Pasta de destino no Zynor Docs",
+      confirmLabel: "Selecionar",
+      currentPath: null,
+      onConfirm: dest => {
+        _syncModalRemotePath = dest;
+        document.getElementById("syncModalRemoteDisplay").value = dest === "" ? "Raiz" : _displayPath(dest);
+      },
+      onClose: () => { syncOverlay.style.display = "flex"; },
+    });
+  });
+}
+
 function initSettingsModals() {
   initSettingsTabs();
   initEmpresaTab();
+  initSyncTab();
 
   document.getElementById("btnNewUser")?.addEventListener("click", () => openUserModal());
   document.getElementById("userModalClose")?.addEventListener("click", closeUserModal);
@@ -1911,11 +2519,14 @@ document.addEventListener("DOMContentLoaded", () => {
   initChangePw();
   initSearch();
   initDetailTabs();
+  initFileListSort();
   initFavoriteBtn();
   initNewDropdown();
+  initFolderOptions();
   initModal();
   initUpload();
   initShare();
+  initMove();
   initNotifications();
   initUserMenu();
   initPlanModal();
